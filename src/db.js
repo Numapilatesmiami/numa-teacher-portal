@@ -134,6 +134,13 @@ export async function initDatabase() {
       `);
     }
 
+    // ===== SAFE MIGRATIONS (additive only — never drops data) =====
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE sections ADD COLUMN IF NOT EXISTS featured_image TEXT;
+      ALTER TABLE sections ADD COLUMN IF NOT EXISTS video_url TEXT;
+    `);
+
     console.log('[db] Database initialized successfully');
   } finally {
     client.release();

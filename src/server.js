@@ -4,10 +4,17 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { pool, initDatabase } from './db.js';
 import { seedModulesIfEmpty } from './seed.js';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,8 +22,31 @@ const JWT_SECRET = process.env.JWT_SECRET || 'numa-dev-secret-change-in-producti
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'numa2026';
 
+// ===== UPLOADS DIR (persistent on Railway volume if mounted at /data) =====
+const UPLOAD_ROOT = process.env.UPLOAD_DIR || (fs.existsSync('/data') ? '/data/uploads' : path.join(__dirname, '..', 'uploads'));
+if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
+console.log(`[server] Upload directory: ${UPLOAD_ROOT}`);
+
+const storage = multer.diskStorage({
+  destination: UPLOAD_ROOT,
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    cb(null, safeName);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(jpeg|jpg|png|gif|webp)$/i.test(file.mimetype);
+    if (ok) cb(null, true); else cb(new Error('Only JPEG, PNG, GIF, or WebP images are allowed'));
+  }
+});
+
 app.use(cors({ origin: '*', credentials: false }));
 app.use(express.json({ limit: '5mb' }));
+app.use('/uploads', express.static(UPLOAD_ROOT, { maxAge: '7d' }));
 
 // ===== AUTH MIDDLEWARE =====
 function authRequired(req, res, next) {
@@ -352,6 +382,76 @@ app.post('/api/admin/enrollment-codes', adminRequired, async (req, res) => {
 app.delete('/api/admin/enrollment-codes/:code', adminRequired, async (req, res) => {
   await pool.query('DELETE FROM enrollment_codes WHERE code = $1', [req.params.code]);
   res.json({ ok: true });
+});
+
+// ===== ACCOUNT SETTINGS (any logged-in user) =====
+app.put('/api/auth/me', authRequired, async (req, res) => {
+  try {
+    const { full_name, email } = req.body;
+    if (!full_name || !email) return res.status(400).json({ error: 'Name and email are required' });
+    const result = await pool.query(
+      `UPDATE users SET full_name = $1, email = $2, updated_at = NOW()
+       WHERE id = $3 RETURNING id, username, full_name, email, role`,
+      [full_name.trim(), email.trim(), req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+app.put('/api/auth/password', authRequired, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) return res.status(400).json({ error: 'Both current and new password required' });
+    if (new_password.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (userRes.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const valid = await bcrypt.compare(current_password, userRes.rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Password change failed' });
+  }
+});
+
+// ===== ADMIN: RESET STUDENT PASSWORD =====
+app.put('/api/admin/students/:id/password', adminRequired, async (req, res) => {
+  try {
+    const { new_password } = req.body;
+    if (!new_password || new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const hash = await bcrypt.hash(new_password, 10);
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING id, username, full_name',
+      [hash, req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Student not found' });
+    res.json({ ok: true, user: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Reset failed' });
+  }
+});
+
+// ===== MEDIA UPLOAD (admin only, images) =====
+app.post('/api/admin/upload', adminRequired, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const publicUrl = `/uploads/${req.file.filename}`;
+    res.json({
+      ok: true,
+      url: publicUrl,
+      absoluteUrl: `${req.protocol}://${req.get('host')}${publicUrl}`,
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    });
+  });
 });
 
 // ===== START =====

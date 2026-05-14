@@ -1324,3 +1324,29 @@ button, input, select, textarea {
 }
 .locked-overlay i { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
 .locked-overlay h3 { color: var(--charcoal-muted); margin-bottom: 8px; }
+
+/* ===== Rich text editor toolbar ===== */
+.rt-btn {
+  background: #fff;
+  border: 1px solid var(--cream-darker);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--charcoal);
+  transition: background 0.15s, border-color 0.15s;
+  font-size: 13px;
+}
+.rt-btn:hover { background: var(--cream); border-color: var(--terracotta); }
+.rt-btn:active { background: var(--cream-dark); }
+.rich-editor img { max-width: 100%; height: auto; border-radius: 8px; }
+.rich-editor h2 { font-family: 'Cormorant Garamond', serif; font-size: 1.8rem; margin: 18px 0 10px; color: var(--charcoal); }
+.rich-editor h3 { font-family: 'Cormorant Garamond', serif; font-size: 1.4rem; margin: 16px 0 8px; color: var(--charcoal); }
+.rich-editor h4 { font-size: 1.1rem; margin: 14px 0 6px; color: var(--charcoal); }
+.rich-editor p { margin: 0 0 12px; }
+.rich-editor ul, .rich-editor ol { margin: 0 0 12px 24px; }
+.rich-editor blockquote { border-left: 3px solid var(--terracotta); padding-left: 16px; color: var(--charcoal-light); margin: 12px 0; font-style: italic; }
+.rich-editor .video-wrap { max-width: 100%; }

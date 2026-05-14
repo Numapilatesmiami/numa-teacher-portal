@@ -2331,17 +2331,18 @@ function renderSectionEditor(moduleId, sectionId) {
     const modules = await loadAdminModules();
     const m = modules.find(x => String(x.id) === String(moduleId));
     if (!m) return;
+    const editor = document.getElementById('sec-content-rich');
     if (isNew) {
       document.getElementById('sec-id').value = `${moduleId}-${(m.sections || []).length + 1}`;
       document.getElementById('sec-title').value = '';
-      document.getElementById('sec-content').value = '';
+      if (editor) editor.innerHTML = '<p>Start typing here…</p>';
       return;
     }
     const s = (m.sections || []).find(x => String(x.id) === String(sectionId));
     if (s) {
       document.getElementById('sec-id').value = s.id;
       document.getElementById('sec-title').value = s.title || '';
-      document.getElementById('sec-content').value = s.content || '';
+      if (editor) editor.innerHTML = s.content || '<p></p>';
     }
   }, 50);
 
@@ -2364,28 +2365,182 @@ function renderSectionEditor(moduleId, sectionId) {
         <input type="text" id="sec-title" class="form-control" placeholder="e.g. Introduction to Springs">
       </div>
       <div class="form-group">
-        <label>Content <span class="text-muted">(HTML supported — use &lt;h2&gt;, &lt;p&gt;, &lt;ul&gt;, &lt;table&gt;, etc.)</span></label>
-        <textarea id="sec-content" class="form-control" rows="20" style="font-family:monospace;font-size:0.9rem;line-height:1.5;" placeholder="<h2>Section Title</h2><p>Your content here...</p>"></textarea>
+        <label>Lesson Content</label>
+        ${renderRichEditorToolbar()}
+        <div id="sec-content-rich" class="rich-editor" contenteditable="true"
+             style="min-height:400px;border:1px solid var(--cream-darker);border-top:none;border-radius:0 0 8px 8px;padding:20px;background:#fff;line-height:1.7;font-family:'Work Sans',sans-serif;font-size:15px;outline:none;overflow-y:auto;max-height:600px;">
+          <p>Start typing here…</p>
+        </div>
+        <input type="file" id="sec-image-upload" accept="image/*" style="display:none;" onchange="handleImageUpload(this)">
+        <small class="text-muted" style="display:block;margin-top:8px;">Tip: Highlight text and use the toolbar to format. Click the image button to upload from your computer.</small>
       </div>
-      <div style="display:flex;gap:10px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="saveSection('${moduleId}','${sectionId || ''}', ${isNew})"><i class="fa-solid fa-floppy-disk"></i> ${isNew ? 'Create Section' : 'Save Changes'}</button>
         <button class="btn btn-secondary" onclick="previewSection()"><i class="fa-solid fa-eye"></i> Preview</button>
+        <button class="btn btn-ghost" onclick="toggleHtmlSource()"><i class="fa-solid fa-code"></i> Toggle HTML</button>
       </div>
       <div id="section-save-status" style="margin-top:12px;"></div>
       <div id="section-preview" style="margin-top:20px;display:none;border-top:1px solid var(--cream-darker);padding-top:20px;"></div>
+      <textarea id="sec-content-html" class="form-control" rows="15" style="display:none;margin-top:12px;font-family:monospace;font-size:0.9rem;"></textarea>
     </div></div>
   `;
+}
+
+function renderRichEditorToolbar() {
+  return `
+    <div class="rich-toolbar" style="display:flex;flex-wrap:wrap;gap:4px;padding:10px;background:var(--cream-dark);border:1px solid var(--cream-darker);border-radius:8px 8px 0 0;align-items:center;">
+      <select onchange="richExec('formatBlock', this.value); this.value='';" style="padding:6px;border-radius:6px;border:1px solid var(--cream-darker);background:#fff;cursor:pointer;">
+        <option value="">Format…</option>
+        <option value="<h2>">Heading 1</option>
+        <option value="<h3>">Heading 2</option>
+        <option value="<h4>">Heading 3</option>
+        <option value="<p>">Paragraph</option>
+        <option value="<blockquote>">Quote</option>
+      </select>
+      <select onchange="richExec('fontName', this.value); this.value='';" style="padding:6px;border-radius:6px;border:1px solid var(--cream-darker);background:#fff;cursor:pointer;">
+        <option value="">Font…</option>
+        <option value="Work Sans">Work Sans (body)</option>
+        <option value="Cormorant Garamond">Cormorant (display)</option>
+        <option value="Georgia">Georgia</option>
+        <option value="Arial">Arial</option>
+        <option value="Helvetica">Helvetica</option>
+        <option value="Courier New">Courier New</option>
+      </select>
+      <select onchange="richExec('fontSize', this.value); this.value='';" style="padding:6px;border-radius:6px;border:1px solid var(--cream-darker);background:#fff;cursor:pointer;">
+        <option value="">Size…</option>
+        <option value="2">Small</option>
+        <option value="3">Normal</option>
+        <option value="4">Medium</option>
+        <option value="5">Large</option>
+        <option value="6">X-Large</option>
+        <option value="7">Huge</option>
+      </select>
+      <span style="width:1px;height:24px;background:var(--cream-darker);margin:0 4px;"></span>
+      <button type="button" class="rt-btn" onclick="richExec('bold')" title="Bold"><i class="fa-solid fa-bold"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('italic')" title="Italic"><i class="fa-solid fa-italic"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('underline')" title="Underline"><i class="fa-solid fa-underline"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('strikeThrough')" title="Strikethrough"><i class="fa-solid fa-strikethrough"></i></button>
+      <span style="width:1px;height:24px;background:var(--cream-darker);margin:0 4px;"></span>
+      <button type="button" class="rt-btn" onclick="richExec('justifyLeft')" title="Align left"><i class="fa-solid fa-align-left"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('justifyCenter')" title="Center"><i class="fa-solid fa-align-center"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('justifyRight')" title="Align right"><i class="fa-solid fa-align-right"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('justifyFull')" title="Justify"><i class="fa-solid fa-align-justify"></i></button>
+      <span style="width:1px;height:24px;background:var(--cream-darker);margin:0 4px;"></span>
+      <button type="button" class="rt-btn" onclick="richExec('insertUnorderedList')" title="Bulleted list"><i class="fa-solid fa-list-ul"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('insertOrderedList')" title="Numbered list"><i class="fa-solid fa-list-ol"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('outdent')" title="Decrease indent"><i class="fa-solid fa-outdent"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('indent')" title="Increase indent"><i class="fa-solid fa-indent"></i></button>
+      <span style="width:1px;height:24px;background:var(--cream-darker);margin:0 4px;"></span>
+      <input type="color" onchange="richExec('foreColor', this.value)" title="Text color" style="width:32px;height:32px;border:none;background:none;cursor:pointer;padding:0;">
+      <button type="button" class="rt-btn" onclick="insertLink()" title="Link"><i class="fa-solid fa-link"></i></button>
+      <button type="button" class="rt-btn" onclick="document.getElementById('sec-image-upload').click()" title="Upload image"><i class="fa-solid fa-image"></i></button>
+      <button type="button" class="rt-btn" onclick="insertYoutubeEmbed()" title="Embed YouTube video"><i class="fa-brands fa-youtube" style="color:#c4302b;"></i></button>
+      <span style="width:1px;height:24px;background:var(--cream-darker);margin:0 4px;"></span>
+      <button type="button" class="rt-btn" onclick="richExec('removeFormat')" title="Clear formatting"><i class="fa-solid fa-eraser"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('undo')" title="Undo"><i class="fa-solid fa-rotate-left"></i></button>
+      <button type="button" class="rt-btn" onclick="richExec('redo')" title="Redo"><i class="fa-solid fa-rotate-right"></i></button>
+    </div>
+  `;
+}
+
+function richExec(command, value) {
+  const editor = document.getElementById('sec-content-rich');
+  if (editor) editor.focus();
+  try {
+    document.execCommand(command, false, value || null);
+  } catch (e) {
+    console.warn('Editor command failed:', e);
+  }
+}
+
+function insertLink() {
+  const url = prompt('Enter the URL (include https://):');
+  if (url) richExec('createLink', url);
+}
+
+function insertYoutubeEmbed() {
+  const url = prompt('Paste a YouTube URL (e.g. https://youtu.be/abc123 or https://youtube.com/watch?v=abc123):');
+  if (!url) return;
+  let videoId = null;
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /^([a-zA-Z0-9_-]{11})$/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) { videoId = m[1]; break; }
+  }
+  if (!videoId) { alert('Could not detect a YouTube video ID in that URL.'); return; }
+  const embed = `<div class="video-wrap" style="position:relative;padding-bottom:56.25%;height:0;margin:20px 0;border-radius:8px;overflow:hidden;"><iframe src="https://www.youtube.com/embed/${videoId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div>`;
+  const editor = document.getElementById('sec-content-rich');
+  editor.focus();
+  document.execCommand('insertHTML', false, embed + '<p></p>');
+}
+
+async function handleImageUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const editor = document.getElementById('sec-content-rich');
+  if (!editor) return;
+  if (!API_BASE) {
+    alert('Image upload needs the backend connected. Add window.NUMA_API_BASE to your site.');
+    input.value = '';
+    return;
+  }
+  const placeholder = `<p><em>Uploading ${escapeHtml(file.name)}…</em></p>`;
+  editor.focus();
+  document.execCommand('insertHTML', false, placeholder);
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const token = localStorage.getItem('numa_token');
+    const res = await fetch(`${API_BASE}/api/admin/upload`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd
+    });
+    const data = await res.json();
+    if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
+    const imgUrl = data.absoluteUrl || (API_BASE + data.url);
+    // Replace placeholder with real image
+    editor.innerHTML = editor.innerHTML.replace(placeholder, `<p><img src="${imgUrl}" alt="${escapeAttr(file.name)}" style="max-width:100%;height:auto;border-radius:8px;display:block;margin:16px auto;"></p>`);
+  } catch (err) {
+    editor.innerHTML = editor.innerHTML.replace(placeholder, `<p style="color:#c00;"><em>Upload failed: ${escapeHtml(err.message || 'unknown error')}</em></p>`);
+  }
+  input.value = '';
+}
+
+function toggleHtmlSource() {
+  const rich = document.getElementById('sec-content-rich');
+  const html = document.getElementById('sec-content-html');
+  if (!rich || !html) return;
+  if (html.style.display === 'none') {
+    html.value = rich.innerHTML;
+    html.style.display = 'block';
+    rich.style.display = 'none';
+  } else {
+    rich.innerHTML = html.value;
+    html.style.display = 'none';
+    rich.style.display = 'block';
+  }
 }
 
 async function saveSection(moduleId, sectionId, isNew) {
   const statusEl = document.getElementById('section-save-status');
   statusEl.innerHTML = '<span class="text-muted">Saving...</span>';
 
+  // Pull content from whichever view is active (rich vs raw HTML)
+  const rich = document.getElementById('sec-content-rich');
+  const html = document.getElementById('sec-content-html');
+  let content = '';
+  if (html && html.style.display !== 'none') content = html.value;
+  else if (rich) content = rich.innerHTML;
+
   const payload = {
     id: document.getElementById('sec-id').value.trim(),
     module_id: moduleId,
     title: document.getElementById('sec-title').value.trim(),
-    content: document.getElementById('sec-content').value,
+    content,
     sort_order: 99
   };
   if (!payload.title || !payload.id) {
@@ -2419,8 +2574,13 @@ async function deleteSectionConfirm(sectionId, title, moduleId) {
 }
 
 function previewSection() {
-  const content = document.getElementById('sec-content').value;
+  const rich = document.getElementById('sec-content-rich');
+  const html = document.getElementById('sec-content-html');
+  let content = '';
+  if (html && html.style.display !== 'none') content = html.value;
+  else if (rich) content = rich.innerHTML;
   const previewEl = document.getElementById('section-preview');
+  if (!previewEl) return;
   previewEl.style.display = 'block';
   previewEl.innerHTML = `<h4 style="margin-bottom:14px;color:var(--terracotta);">Preview</h4><div class="content-area">${content}</div>`;
 }
@@ -2432,3 +2592,211 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   return escapeHtml(s).replace(/'/g, "\\'");
 }
+
+// ===== ACCOUNT SETTINGS PAGE =====
+function renderAccountSettings() {
+  const u = APP.currentUser;
+  if (!u) return '<p>Please log in.</p>';
+  const isAdmin = u.role === 'admin' || u.username === 'admin';
+  return `
+    <div class="page-header fade-in">
+      <h1><i class="fa-solid fa-user-gear"></i> Account Settings</h1>
+      <p>Update your profile and password</p>
+    </div>
+    <div style="max-width:640px;">
+      <div class="card slide-up"><div class="card-body">
+        <h3 style="margin-bottom:16px;">Profile</h3>
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" class="form-control" value="${escapeAttr(u.username)}" readonly style="opacity:0.6;">
+          <small class="text-muted">Username cannot be changed.</small>
+        </div>
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="acct-name" class="form-control" value="${escapeAttr(u.fullName || u.full_name || '')}">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="acct-email" class="form-control" value="${escapeAttr(u.email || '')}">
+        </div>
+        <button class="btn btn-primary" onclick="saveAccountProfile()"><i class="fa-solid fa-floppy-disk"></i> Save Profile</button>
+        <div id="acct-profile-status" style="margin-top:12px;"></div>
+      </div></div>
+
+      <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+        <h3 style="margin-bottom:16px;">Change Password</h3>
+        <div class="form-group">
+          <label>Current Password</label>
+          <input type="password" id="acct-pw-current" class="form-control" autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label>New Password <span class="text-muted">(at least 6 characters)</span></label>
+          <input type="password" id="acct-pw-new" class="form-control" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Confirm New Password</label>
+          <input type="password" id="acct-pw-confirm" class="form-control" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary" onclick="saveAccountPassword()"><i class="fa-solid fa-lock"></i> Change Password</button>
+        <div id="acct-pw-status" style="margin-top:12px;"></div>
+      </div></div>
+
+      ${!isAdmin ? `
+      <div class="card slide-up" style="margin-top:20px;background:var(--cream-dark);"><div class="card-body">
+        <h4 style="margin-bottom:8px;"><i class="fa-solid fa-circle-info"></i> Forgot your password?</h4>
+        <p style="margin:0;color:var(--charcoal-light);">If you forget your password, contact your studio admin and they can reset it for you.</p>
+      </div></div>
+      ` : ''}
+    </div>
+  `;
+}
+
+async function saveAccountProfile() {
+  const statusEl = document.getElementById('acct-profile-status');
+  const fullName = document.getElementById('acct-name').value.trim();
+  const email = document.getElementById('acct-email').value.trim();
+  if (!fullName || !email) {
+    statusEl.innerHTML = '<span style="color:var(--error);">Name and email are required.</span>';
+    return;
+  }
+  statusEl.innerHTML = '<span class="text-muted">Saving...</span>';
+  if (API_BASE) {
+    const result = await apiCall('/api/auth/me', { method: 'PUT', body: JSON.stringify({ full_name: fullName, email }) });
+    if (result) {
+      APP.currentUser.fullName = fullName;
+      APP.currentUser.full_name = fullName;
+      APP.currentUser.email = email;
+      saveUserData(APP.currentUser);
+      statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Profile saved.</span>';
+      setTimeout(() => render(), 800);
+      return;
+    }
+    statusEl.innerHTML = '<span style="color:var(--error);">Save failed. Try again.</span>';
+    return;
+  }
+  // Local fallback
+  APP.currentUser.fullName = fullName;
+  APP.currentUser.email = email;
+  saveUserData(APP.currentUser);
+  statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Saved locally.</span>';
+  setTimeout(() => render(), 800);
+}
+
+async function saveAccountPassword() {
+  const statusEl = document.getElementById('acct-pw-status');
+  const current = document.getElementById('acct-pw-current').value;
+  const next = document.getElementById('acct-pw-new').value;
+  const confirm = document.getElementById('acct-pw-confirm').value;
+  if (!current || !next) {
+    statusEl.innerHTML = '<span style="color:var(--error);">Both current and new password are required.</span>';
+    return;
+  }
+  if (next.length < 6) {
+    statusEl.innerHTML = '<span style="color:var(--error);">New password must be at least 6 characters.</span>';
+    return;
+  }
+  if (next !== confirm) {
+    statusEl.innerHTML = '<span style="color:var(--error);">New password and confirmation do not match.</span>';
+    return;
+  }
+  statusEl.innerHTML = '<span class="text-muted">Updating...</span>';
+  if (API_BASE) {
+    const result = await apiCall('/api/auth/password', { method: 'PUT', body: JSON.stringify({ current_password: current, new_password: next }) });
+    if (result && result.ok) {
+      statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Password updated. Use the new password next time you sign in.</span>';
+      document.getElementById('acct-pw-current').value = '';
+      document.getElementById('acct-pw-new').value = '';
+      document.getElementById('acct-pw-confirm').value = '';
+      return;
+    }
+    statusEl.innerHTML = '<span style="color:var(--error);">Could not change password. Check your current password.</span>';
+    return;
+  }
+  statusEl.innerHTML = '<span style="color:var(--warning);">Password change requires the backend to be connected.</span>';
+}
+
+// ===== ADMIN: RESET STUDENT PASSWORD =====
+async function adminResetStudentPassword(studentId, studentName) {
+  const newPw = prompt(`Enter a new password for ${studentName}.\nThey will use this to log in. (at least 6 characters)`);
+  if (!newPw) return;
+  if (newPw.length < 6) { alert('Password must be at least 6 characters.'); return; }
+  if (!API_BASE) { alert('This needs the backend connected.'); return; }
+  const result = await apiCall(`/api/admin/students/${studentId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPw }) });
+  if (result && result.ok) {
+    alert(`Password reset successfully for ${studentName}.\nNew password: ${newPw}\n\nPlease share this with them securely. They can change it themselves once logged in via Account Settings.`);
+  } else {
+    alert('Reset failed. Please try again.');
+  }
+}
+
+// ===== Route patching: add 'account' view to both shells =====
+(function patchRoutingForAccount() {
+  if (typeof renderMainContent === 'function') {
+    const _origMain = renderMainContent;
+    window.renderMainContent = function() {
+      if (APP.currentView === 'account') return renderAccountSettings();
+      return _origMain();
+    };
+    renderMainContent = window.renderMainContent;
+  }
+  if (typeof renderAdminContent === 'function') {
+    const _origAdmin = renderAdminContent;
+    window.renderAdminContent = function() {
+      const p = APP.viewParams || {};
+      if (p.view === 'account') return renderAccountSettings();
+      return _origAdmin();
+    };
+    renderAdminContent = window.renderAdminContent;
+  }
+})();
+
+// ===== Sidebar & top-nav additions for account link =====
+(function patchShellsForAccountLink() {
+  if (typeof renderAppShell === 'function') {
+    const _origShell = renderAppShell;
+    window.renderAppShell = function() {
+      let html = _origShell();
+      // Insert account button before Sign Out
+      html = html.replace(
+        /<button class="btn btn-ghost btn-sm" onclick="handleLogout\(\)">/,
+        '<button class="btn btn-ghost btn-sm" onclick="navigate(\'account\')" title="Account Settings"><i class="fa-solid fa-user-gear"></i> My Account</button> <button class="btn btn-ghost btn-sm" onclick="handleLogout()">'
+      );
+      return html;
+    };
+    renderAppShell = window.renderAppShell;
+  }
+  if (typeof renderAdminShell === 'function') {
+    const _origAdminShell = renderAdminShell;
+    window.renderAdminShell = function() {
+      let html = _origAdminShell();
+      html = html.replace(
+        /<button class="btn btn-ghost btn-sm" onclick="handleLogout\(\)">/,
+        '<button class="btn btn-ghost btn-sm" onclick="navigate(\'admin\',{view:\'account\'})" title="Account Settings"><i class="fa-solid fa-user-gear"></i> My Account</button> <button class="btn btn-ghost btn-sm" onclick="handleLogout()">'
+      );
+      return html;
+    };
+    renderAdminShell = window.renderAdminShell;
+  }
+})();
+
+// ===== Add 'Reset Password' button on admin student detail page =====
+(function patchAdminStudentDetail() {
+  if (typeof renderAdminStudentDetail !== 'function') return;
+  const _orig = renderAdminStudentDetail;
+  window.renderAdminStudentDetail = function(username) {
+    let html = _orig(username);
+    const u = (typeof getUserData === 'function') ? getUserData(username) : null;
+    if (!u) return html;
+    const studentId = u.id || username;
+    const studentName = (u.fullName || u.full_name || u.username || '').replace(/'/g, "\\'");
+    // Insert a reset button next to the breadcrumb area
+    const button = `
+      <div style="margin:0 0 18px 0;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-sm" onclick="adminResetStudentPassword('${studentId}','${studentName}')"><i class="fa-solid fa-key"></i> Reset Password</button>
+      </div>
+    `;
+    html = html.replace('<div class="stats-grid slide-up">', button + '<div class="stats-grid slide-up">');
+    return html;
+  };
+  renderAdminStudentDetail = window.renderAdminStudentDetail;
+})();
