@@ -2933,3 +2933,966 @@ async function adminResetStudentPassword(studentId, studentName) {
   };
   renderAdminStudentDetail = window.renderAdminStudentDetail;
 })();
+
+// =============================================================================
+// ===== NEW FEATURES (May 2026): Progress, Section Quizzes, Q&A, Forum ========
+// =============================================================================
+
+// ----- Shared in-memory cache (refetched as needed) -----
+const NUMA_NEW = {
+  progress: null,            // { completedIds: Set, perModule: {moduleId:count}, totals: {moduleId:total}, byModuleProgress }
+  questions: null,           // student's questions list
+  adminQuestions: null,      // admin's full question list
+  forumPosts: null,          // top-level forum posts
+  sectionQuizCache: {},      // sectionId -> quiz
+  attemptsCache: {}          // sectionId -> attempts[]
+};
+
+// ----- Fetch current user's progress and build percentages -----
+async function loadMyProgress(force = false) {
+  if (NUMA_NEW.progress && !force) return NUMA_NEW.progress;
+  const data = await apiCall('/api/progress/me');
+  if (!data) { NUMA_NEW.progress = { completedIds: new Set(), perModule: {}, totals: {} }; return NUMA_NEW.progress; }
+  const completedIds = new Set();
+  const perModule = {};
+  (data.completed || []).forEach((row) => {
+    completedIds.add(row.section_id);
+    perModule[row.module_id] = (perModule[row.module_id] || 0) + 1;
+  });
+  const totals = {};
+  (data.totals || []).forEach((row) => { totals[row.module_id] = row.total; });
+  NUMA_NEW.progress = { completedIds, perModule, totals };
+  return NUMA_NEW.progress;
+}
+
+function progressPctForModule(moduleId) {
+  const p = NUMA_NEW.progress;
+  if (!p) return 0;
+  const total = p.totals[moduleId] || 0;
+  const done = p.perModule[moduleId] || 0;
+  if (!total) return 0;
+  return Math.round((done / total) * 100);
+}
+
+function overallProgressPct() {
+  const p = NUMA_NEW.progress;
+  if (!p) return 0;
+  let done = 0, total = 0;
+  Object.values(p.totals || {}).forEach(v => { total += v; });
+  Object.values(p.perModule || {}).forEach(v => { done += v; });
+  if (!total) return 0;
+  return Math.round((done / total) * 100);
+}
+
+async function markSectionComplete(sectionId, completed = true) {
+  const out = await apiCall(`/api/progress/sections/${encodeURIComponent(sectionId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ completed })
+  });
+  await loadMyProgress(true);
+  return out;
+}
+
+// =============================================================================
+// ===== ROUTE EXTENSIONS — wire new views into renderMainContent =============
+// =============================================================================
+(function extendStudentRouter() {
+  if (typeof renderMainContent !== 'function') return;
+  const _origMain = renderMainContent;
+  window.renderMainContent = function() {
+    const v = APP.currentView;
+    if (v === 'progress') return renderStudentProgress();
+    if (v === 'questions') return renderStudentQuestions();
+    if (v === 'question-detail') return renderStudentQuestionDetail();
+    if (v === 'forum') return renderForumList();
+    if (v === 'forum-thread') return renderForumThread();
+    return _origMain();
+  };
+  renderMainContent = window.renderMainContent;
+})();
+
+(function extendAdminRouter() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _origAdmin = renderAdminContent;
+  window.renderAdminContent = function() {
+    const p = APP.viewParams || {};
+    if (p.view === 'questions') return renderAdminQuestions();
+    if (p.view === 'question-detail') return renderAdminQuestionDetail();
+    if (p.view === 'attempts') return renderAdminAttempts();
+    if (p.view === 'forum') return renderAdminForum();
+    if (p.view === 'section-quiz') return renderAdminSectionQuizEditor();
+    return _origAdmin();
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+// =============================================================================
+// ===== STUDENT SIDEBAR — add Progress, My Questions, Forum links =============
+// =============================================================================
+(function extendStudentSidebar() {
+  if (typeof renderSidebar !== 'function') return;
+  const _origSb = renderSidebar;
+  window.renderSidebar = function() {
+    const v = APP.currentView;
+    let extra = `
+      <div class="sidebar-item ${v === 'progress' ? 'active' : ''}" onclick="navigate('progress')">
+        <i class="fa-solid fa-chart-line"></i> My Progress
+      </div>
+      <div class="sidebar-item ${v === 'questions' || v === 'question-detail' ? 'active' : ''}" onclick="navigate('questions')">
+        <i class="fa-solid fa-circle-question"></i> Ask a Question
+      </div>
+      <div class="sidebar-item ${v === 'forum' || v === 'forum-thread' ? 'active' : ''}" onclick="navigate('forum')">
+        <i class="fa-solid fa-comments"></i> Discussion Forum
+      </div>`;
+    let html = _origSb();
+    // Insert under "Main" section, before the closing </div> of that block
+    html = html.replace(
+      /(<div class="sidebar-item[^>]*onclick="navigate\('exam'\)">[\s\S]*?<\/div>)\s*<\/div>\s*<div class="sidebar-section">\s*<div class="sidebar-label">Modules<\/div>/,
+      `$1${extra}</div><div class="sidebar-section"><div class="sidebar-label">Modules</div>`
+    );
+    return html;
+  };
+  renderSidebar = window.renderSidebar;
+})();
+
+// =============================================================================
+// ===== ADMIN DASHBOARD — add new quick-action buttons ========================
+// =============================================================================
+(function extendAdminQuickActions() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  window.renderAdminContent = function() {
+    const p = APP.viewParams || {};
+    // Only inject buttons on the main admin home (no view, no student)
+    let html = _orig();
+    if (!p.student && !p.view) {
+      const extra = `
+        <button class="btn btn-secondary" onclick="navigate('admin',{view:'questions'})"><i class="fa-solid fa-inbox"></i> Student Questions <span id="admin-q-count" class="badge badge-progress" style="margin-left:6px;display:none;"></span></button>
+        <button class="btn btn-secondary" onclick="navigate('admin',{view:'attempts'})"><i class="fa-solid fa-stopwatch"></i> Quiz Attempts</button>
+        <button class="btn btn-secondary" onclick="navigate('admin',{view:'forum'})"><i class="fa-solid fa-comments"></i> Discussion Forum</button>`;
+      html = html.replace(
+        '<button class="btn btn-secondary" onclick="navigate(\'admin\',{view:\'plagiarism\'})"',
+        extra + '<button class="btn btn-secondary" onclick="navigate(\'admin\',{view:\'plagiarism\'})"'
+      );
+      // Async update the unread question count
+      setTimeout(async () => {
+        const open = await apiCall('/api/admin/questions?status=open');
+        const el = document.getElementById('admin-q-count');
+        if (el && Array.isArray(open) && open.length > 0) {
+          el.textContent = open.length;
+          el.style.display = 'inline-block';
+        }
+      }, 0);
+    }
+    return html;
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+// =============================================================================
+// ===== STUDENT: PROGRESS PAGE ================================================
+// =============================================================================
+function renderStudentProgress() {
+  setTimeout(async () => {
+    await loadMyProgress(true);
+    const container = document.getElementById('progress-container');
+    if (container) container.innerHTML = renderProgressBody();
+  }, 0);
+  return `
+    <div class="page-header fade-in">
+      <h1>My Progress</h1>
+      <p>Track every section you've completed and every quiz attempt</p>
+    </div>
+    <div id="progress-container">
+      <div class="card"><div class="card-body text-center text-muted">Loading your progress…</div></div>
+    </div>`;
+}
+
+function renderProgressBody() {
+  const overall = overallProgressPct();
+  const p = NUMA_NEW.progress || { completedIds: new Set(), perModule: {}, totals: {} };
+  let html = `
+    <div class="card slide-up">
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h2 style="margin:0;font-size:1.2rem;">Overall Course Progress</h2>
+          <strong style="font-size:1.4rem;">${overall}%</strong>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${overall}%"></div></div>
+        <p class="text-muted text-sm mt-1">Sections completed across all modules</p>
+      </div>
+    </div>
+    <h2 class="mb-2 mt-4" style="font-size:1.3rem;">Per-Module Progress</h2>
+    <div class="modules-grid">`;
+  COURSE_MODULES.forEach((mod) => {
+    const pct = progressPctForModule(mod.id);
+    const done = p.perModule[mod.id] || 0;
+    const total = p.totals[mod.id] || 0;
+    html += `
+      <div class="module-card slide-up" onclick="navigateModule(${mod.id})" style="cursor:pointer;">
+        <div class="module-card-top ${mod.id % 2 === 0 ? 'terracotta' : 'sage'}"></div>
+        <div class="module-card-body">
+          <div class="module-card-num"><span>Module ${mod.id}</span></div>
+          <h3 style="font-size:1.05rem;">${mod.title}</h3>
+          <div class="progress-bar-wrap" style="margin:10px 0 6px;"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;">
+            <span class="text-muted">${done} / ${total} sections</span>
+            <strong>${pct}%</strong>
+          </div>
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+  // Section-quiz attempts history
+  html += `
+    <h2 class="mb-2 mt-4" style="font-size:1.3rem;">My Section-Quiz Attempts</h2>
+    <div id="my-attempts-table" class="card"><div class="card-body text-center text-muted">Loading attempts…</div></div>`;
+  setTimeout(loadMyAttemptsTable, 0);
+  return html;
+}
+
+async function loadMyAttemptsTable() {
+  const attempts = await apiCall('/api/admin/section-quiz-attempts?user_id=' + (APP.currentUser?.id || 0))
+    || await apiCall('/api/quiz-scores'); // student fallback gives module-level
+  const target = document.getElementById('my-attempts-table');
+  if (!target) return;
+  if (!attempts || attempts.length === 0) {
+    target.innerHTML = '<div class="card-body text-center text-muted">No quiz attempts yet.</div>';
+    return;
+  }
+  let rows = '';
+  attempts.slice(0, 50).forEach(a => {
+    const pct = Math.round((a.score / a.total) * 100);
+    const time = a.time_spent_seconds ? formatDuration(a.time_spent_seconds) : '—';
+    const when = a.completed_at ? new Date(a.completed_at).toLocaleString() : '—';
+    rows += `<tr>
+      <td>${a.section_title || a.module_id || '—'}</td>
+      <td>${a.score} / ${a.total}</td>
+      <td><strong>${pct}%</strong></td>
+      <td>${time}</td>
+      <td class="text-muted text-sm">${when}</td>
+    </tr>`;
+  });
+  target.innerHTML = `<div class="card-body" style="padding:0;overflow-x:auto;">
+    <table class="admin-table">
+      <thead><tr><th>Section</th><th>Score</th><th>%</th><th>Time</th><th>Completed</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function formatDuration(sec) {
+  if (!sec || sec < 0) return '—';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s.toString().padStart(2, '0')}s`;
+}
+
+// =============================================================================
+// ===== STUDENT: ASK A QUESTION ==============================================
+// =============================================================================
+function renderStudentQuestions() {
+  setTimeout(loadStudentQuestions, 0);
+  return `
+    <div class="page-header fade-in">
+      <h1>Ask a Question</h1>
+      <p>Send a private question to NUMA staff — they'll reply here</p>
+    </div>
+    <div class="card slide-up">
+      <div class="card-body">
+        <input id="q-subject" class="input" placeholder="Subject (optional)" style="margin-bottom:8px;">
+        <textarea id="q-body" class="input" rows="5" placeholder="Type your question…" style="resize:vertical;"></textarea>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="submitStudentQuestion()"><i class="fa-solid fa-paper-plane"></i> Send Question</button>
+        </div>
+      </div>
+    </div>
+    <h2 class="mb-2 mt-4" style="font-size:1.3rem;">My Questions</h2>
+    <div id="my-questions"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadStudentQuestions() {
+  const list = await apiCall('/api/questions') || [];
+  const target = document.getElementById('my-questions');
+  if (!target) return;
+  if (list.length === 0) {
+    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">You haven\'t asked any questions yet.</div></div>';
+    return;
+  }
+  let rows = '';
+  list.forEach(q => {
+    const status = q.status === 'answered'
+      ? '<span class="badge badge-complete">Answered</span>'
+      : q.status === 'closed' ? '<span class="badge badge-locked">Closed</span>'
+      : '<span class="badge badge-progress">Open</span>';
+    rows += `
+      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('question-detail',{id:${q.id}})">
+        <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;">${escapeHtml(q.subject || '(No subject)')}</div>
+            <div class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((q.body || '').slice(0, 120))}</div>
+          </div>
+          <div style="text-align:right;">
+            ${status}
+            <div class="text-muted text-sm">${q.reply_count || 0} repl${q.reply_count === 1 ? 'y' : 'ies'}</div>
+          </div>
+        </div>
+      </div>`;
+  });
+  target.innerHTML = rows;
+}
+
+async function submitStudentQuestion() {
+  const subject = (document.getElementById('q-subject')?.value || '').trim();
+  const body = (document.getElementById('q-body')?.value || '').trim();
+  if (!body) { alert('Please type a question.'); return; }
+  const out = await apiCall('/api/questions', {
+    method: 'POST',
+    body: JSON.stringify({ subject, body })
+  });
+  if (out) {
+    document.getElementById('q-subject').value = '';
+    document.getElementById('q-body').value = '';
+    loadStudentQuestions();
+  } else {
+    alert('Could not submit. Please try again.');
+  }
+}
+
+function renderStudentQuestionDetail() {
+  const id = APP.viewParams?.id;
+  setTimeout(() => loadQuestionThread(id, false), 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('questions');return false;">My Questions</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
+    <div id="q-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadQuestionThread(id, isAdmin) {
+  const data = await apiCall(`/api/questions/${id}`);
+  const target = document.getElementById('q-thread');
+  if (!target || !data) return;
+  const q = data.question;
+  let html = `
+    <div class="card slide-up">
+      <div class="card-body">
+        <h2 style="margin:0 0 4px;">${escapeHtml(q.subject || '(No subject)')}</h2>
+        <div class="text-muted text-sm" style="margin-bottom:10px;">
+          From ${escapeHtml(q.student_name || q.student_username)} • ${new Date(q.created_at).toLocaleString()}
+          ${q.status === 'answered' ? '<span class="badge badge-complete" style="margin-left:8px;">Answered</span>' : ''}
+        </div>
+        <div style="white-space:pre-wrap;">${escapeHtml(q.body)}</div>
+      </div>
+    </div>`;
+  (data.replies || []).forEach(r => {
+    const isStaff = r.author_role === 'admin';
+    html += `
+      <div class="card" style="margin-top:10px;${isStaff ? 'border-left:4px solid var(--terracotta);' : ''}">
+        <div class="card-body">
+          <div class="text-muted text-sm" style="margin-bottom:6px;">
+            <strong>${escapeHtml(r.author_name || 'User')}</strong> ${isStaff ? '<span class="badge badge-complete">Staff</span>' : ''}
+            • ${new Date(r.created_at).toLocaleString()}
+          </div>
+          <div style="white-space:pre-wrap;">${escapeHtml(r.body)}</div>
+        </div>
+      </div>`;
+  });
+  // Reply box
+  if (q.status !== 'closed') {
+    html += `
+      <div class="card" style="margin-top:14px;">
+        <div class="card-body">
+          <textarea id="q-reply-body" class="input" rows="4" placeholder="${isAdmin ? 'Write a reply to the student…' : 'Reply…'}" style="resize:vertical;"></textarea>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <button class="btn btn-primary" onclick="submitQuestionReply(${id}, ${isAdmin})"><i class="fa-solid fa-paper-plane"></i> Send Reply</button>
+            ${isAdmin ? `<button class="btn btn-secondary" onclick="updateQuestionStatus(${id},'answered')">Mark Answered</button>
+            <button class="btn btn-ghost" onclick="updateQuestionStatus(${id},'closed')">Close Thread</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+  target.innerHTML = html;
+}
+
+async function submitQuestionReply(id, isAdmin) {
+  const body = (document.getElementById('q-reply-body')?.value || '').trim();
+  if (!body) { alert('Reply cannot be empty.'); return; }
+  const out = await apiCall(`/api/questions/${id}/replies`, {
+    method: 'POST',
+    body: JSON.stringify({ body })
+  });
+  if (out) loadQuestionThread(id, isAdmin);
+  else alert('Could not send reply.');
+}
+
+async function updateQuestionStatus(id, status) {
+  await apiCall(`/api/admin/questions/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status })
+  });
+  loadQuestionThread(id, true);
+}
+
+// =============================================================================
+// ===== ADMIN: STUDENT QUESTIONS INBOX =======================================
+// =============================================================================
+function renderAdminQuestions() {
+  setTimeout(loadAdminQuestions, 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Student Questions</span></div>
+    <div class="page-header"><h1>Student Questions</h1><p>Reply to questions submitted by your students</p></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('open')">Open</button>
+      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('answered')">Answered</button>
+      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('closed')">Closed</button>
+      <button class="btn btn-ghost btn-sm" onclick="loadAdminQuestions()">All</button>
+    </div>
+    <div id="admin-q-list"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadAdminQuestions(status) {
+  const path = '/api/admin/questions' + (status ? '?status=' + status : '');
+  const list = await apiCall(path) || [];
+  const target = document.getElementById('admin-q-list');
+  if (!target) return;
+  if (list.length === 0) {
+    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">No questions in this view.</div></div>';
+    return;
+  }
+  let rows = '';
+  list.forEach(q => {
+    const badge = q.status === 'answered'
+      ? '<span class="badge badge-complete">Answered</span>'
+      : q.status === 'closed' ? '<span class="badge badge-locked">Closed</span>'
+      : '<span class="badge badge-progress">Open</span>';
+    rows += `
+      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('admin',{view:'question-detail',id:${q.id}})">
+        <div class="card-body" style="display:flex;justify-content:space-between;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;">${escapeHtml(q.subject || '(No subject)')}</div>
+            <div class="text-muted text-sm">From <strong>${escapeHtml(q.student_name || q.student_username)}</strong> • ${new Date(q.created_at).toLocaleString()}</div>
+            <div class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((q.body || '').slice(0, 140))}</div>
+          </div>
+          <div style="text-align:right;">${badge}<div class="text-muted text-sm">${q.reply_count} repl${q.reply_count === 1 ? 'y' : 'ies'}</div></div>
+        </div>
+      </div>`;
+  });
+  target.innerHTML = rows;
+}
+
+function renderAdminQuestionDetail() {
+  const id = APP.viewParams?.id;
+  setTimeout(() => loadQuestionThread(id, true), 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin',{view:'questions'});return false;">Student Questions</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
+    <div id="q-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+// =============================================================================
+// ===== ADMIN: QUIZ ATTEMPTS LOG =============================================
+// =============================================================================
+function renderAdminAttempts() {
+  setTimeout(loadAdminAttempts, 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Quiz Attempts</span></div>
+    <div class="page-header"><h1>Section-Quiz Attempts</h1><p>Every quiz attempt across all students — with score, %, and time</p></div>
+    <div id="attempts-table" class="card"><div class="card-body text-center text-muted">Loading…</div></div>`;
+}
+
+async function loadAdminAttempts() {
+  const list = await apiCall('/api/admin/section-quiz-attempts') || [];
+  const target = document.getElementById('attempts-table');
+  if (!target) return;
+  if (list.length === 0) {
+    target.innerHTML = '<div class="card-body text-center text-muted">No section-quiz attempts yet. Add a quiz to a section first.</div>';
+    return;
+  }
+  let rows = '';
+  list.forEach(a => {
+    const pct = Math.round((a.score / a.total) * 100);
+    const time = formatDuration(a.time_spent_seconds);
+    const when = new Date(a.completed_at).toLocaleString();
+    const passClass = pct >= 70 ? 'badge-complete' : 'badge-locked';
+    rows += `<tr>
+      <td><strong>${escapeHtml(a.full_name || a.username)}</strong><br><span class="text-muted text-sm">${escapeHtml(a.username)}</span></td>
+      <td>${escapeHtml(a.module_title)}<br><span class="text-muted text-sm">${escapeHtml(a.section_title)}</span></td>
+      <td>${a.score} / ${a.total}</td>
+      <td><span class="badge ${passClass}">${pct}%</span></td>
+      <td>${time}</td>
+      <td class="text-muted text-sm">${when}</td>
+    </tr>`;
+  });
+  target.innerHTML = `<div class="card-body" style="padding:0;overflow-x:auto;">
+    <table class="admin-table">
+      <thead><tr><th>Student</th><th>Section</th><th>Score</th><th>%</th><th>Time</th><th>Completed</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+// =============================================================================
+// ===== ADMIN: SECTION-QUIZ EDITOR (per section) ============================
+// =============================================================================
+function renderAdminSectionQuizEditor() {
+  const sectionId = APP.viewParams?.sectionId;
+  const moduleId = APP.viewParams?.moduleId;
+  setTimeout(() => loadSectionQuizForEdit(sectionId), 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin',{view:'modules'});return false;">Course Content</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Section Quiz</span></div>
+    <div class="page-header"><h1>Section Quiz Editor</h1><p>Optional quiz attached to one section. Students see it after reading the section.</p></div>
+    <div id="sq-editor" data-section="${sectionId}" data-module="${moduleId}"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadSectionQuizForEdit(sectionId) {
+  const quiz = await apiCall(`/api/sections/${encodeURIComponent(sectionId)}/quiz`) || {
+    title: 'Section Quiz', time_limit_minutes: null, passing_score: 70, is_optional: true, questions: []
+  };
+  NUMA_NEW.sectionQuizCache[sectionId] = quiz;
+  renderSectionQuizEditorBody(sectionId, quiz);
+}
+
+function renderSectionQuizEditorBody(sectionId, quiz) {
+  const target = document.getElementById('sq-editor');
+  if (!target) return;
+  let qRows = '';
+  (quiz.questions || []).forEach((q, i) => {
+    qRows += `
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-body">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+            <strong>Question ${i + 1}</strong>
+            <button class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="removeSectionQuizQuestion('${sectionId}', ${i})"><i class="fa-solid fa-trash"></i></button>
+          </div>
+          <input class="input" placeholder="Question text" value="${escapeAttr(q.question || '')}" onchange="updateSectionQuizField('${sectionId}', ${i}, 'question', this.value)" style="margin-bottom:6px;">
+          ${[0, 1, 2, 3].map(j => `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">
+              <input type="radio" name="sq-${sectionId}-${i}" ${q.correct_index === j ? 'checked' : ''} onchange="updateSectionQuizField('${sectionId}', ${i}, 'correct_index', ${j})">
+              <input class="input" placeholder="Option ${String.fromCharCode(65 + j)}" value="${escapeAttr((q.options || [])[j] || '')}" onchange="updateSectionQuizOption('${sectionId}', ${i}, ${j}, this.value)" style="flex:1;">
+            </div>`).join('')}
+          <input class="input" placeholder="Explanation (shown after answer, optional)" value="${escapeAttr(q.explanation || '')}" onchange="updateSectionQuizField('${sectionId}', ${i}, 'explanation', this.value)" style="margin-top:6px;">
+        </div>
+      </div>`;
+  });
+  target.innerHTML = `
+    <div class="card slide-up">
+      <div class="card-body">
+        <label class="text-sm">Quiz Title</label>
+        <input id="sq-title" class="input" value="${escapeAttr(quiz.title || 'Section Quiz')}" style="margin-bottom:8px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <label class="text-sm" style="flex:1;min-width:140px;">Passing Score (%)
+            <input id="sq-passing" type="number" class="input" min="0" max="100" value="${quiz.passing_score ?? 70}">
+          </label>
+          <label class="text-sm" style="flex:1;min-width:140px;">Time Limit (minutes, optional)
+            <input id="sq-time" type="number" class="input" min="0" value="${quiz.time_limit_minutes || ''}">
+          </label>
+          <label class="text-sm" style="display:flex;align-items:center;gap:6px;margin-top:18px;">
+            <input id="sq-optional" type="checkbox" ${quiz.is_optional !== false ? 'checked' : ''}> Optional (students may skip)
+          </label>
+        </div>
+      </div>
+    </div>
+    <h3 style="margin:18px 0 10px;">Questions</h3>
+    <div id="sq-questions">${qRows}</div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+      <button class="btn btn-secondary" onclick="addSectionQuizQuestion('${sectionId}')"><i class="fa-solid fa-plus"></i> Add Question</button>
+      <button class="btn btn-primary" onclick="saveSectionQuiz('${sectionId}')"><i class="fa-solid fa-floppy-disk"></i> Save Quiz</button>
+      <button class="btn btn-ghost" onclick="deleteSectionQuiz('${sectionId}')"><i class="fa-solid fa-trash"></i> Remove Quiz</button>
+    </div>
+    <div id="sq-status" class="text-muted text-sm" style="margin-top:10px;"></div>`;
+}
+
+function getCachedQuiz(sectionId) {
+  return NUMA_NEW.sectionQuizCache[sectionId] || (NUMA_NEW.sectionQuizCache[sectionId] = { title: 'Section Quiz', passing_score: 70, is_optional: true, questions: [] });
+}
+
+function addSectionQuizQuestion(sectionId) {
+  const q = getCachedQuiz(sectionId);
+  q.questions = q.questions || [];
+  q.questions.push({ question: '', options: ['', '', '', ''], correct_index: 0, explanation: '' });
+  renderSectionQuizEditorBody(sectionId, q);
+}
+
+function removeSectionQuizQuestion(sectionId, idx) {
+  const q = getCachedQuiz(sectionId);
+  q.questions.splice(idx, 1);
+  renderSectionQuizEditorBody(sectionId, q);
+}
+
+function updateSectionQuizField(sectionId, idx, field, value) {
+  const q = getCachedQuiz(sectionId);
+  if (!q.questions[idx]) return;
+  q.questions[idx][field] = field === 'correct_index' ? Number(value) : value;
+}
+
+function updateSectionQuizOption(sectionId, idx, optIdx, value) {
+  const q = getCachedQuiz(sectionId);
+  if (!q.questions[idx]) return;
+  q.questions[idx].options = q.questions[idx].options || ['', '', '', ''];
+  q.questions[idx].options[optIdx] = value;
+}
+
+async function saveSectionQuiz(sectionId) {
+  const q = getCachedQuiz(sectionId);
+  q.title = document.getElementById('sq-title')?.value || 'Section Quiz';
+  q.passing_score = parseInt(document.getElementById('sq-passing')?.value || '70', 10);
+  const t = document.getElementById('sq-time')?.value;
+  q.time_limit_minutes = t ? parseInt(t, 10) : null;
+  q.is_optional = !!document.getElementById('sq-optional')?.checked;
+  const status = document.getElementById('sq-status');
+  if (status) status.textContent = 'Saving…';
+  const out = await apiCall(`/api/admin/sections/${encodeURIComponent(sectionId)}/quiz`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      title: q.title,
+      time_limit_minutes: q.time_limit_minutes,
+      passing_score: q.passing_score,
+      is_optional: q.is_optional,
+      questions: q.questions
+    })
+  });
+  if (status) status.textContent = out ? 'Saved.' : 'Save failed.';
+}
+
+async function deleteSectionQuiz(sectionId) {
+  if (!confirm('Remove this section quiz?')) return;
+  await apiCall(`/api/admin/sections/${encodeURIComponent(sectionId)}/quiz`, { method: 'DELETE' });
+  NUMA_NEW.sectionQuizCache[sectionId] = { title: 'Section Quiz', passing_score: 70, is_optional: true, questions: [] };
+  renderSectionQuizEditorBody(sectionId, NUMA_NEW.sectionQuizCache[sectionId]);
+}
+
+// =============================================================================
+// ===== STUDENT: TAKE A SECTION QUIZ (inline modal) ==========================
+// =============================================================================
+async function openSectionQuiz(sectionId) {
+  const quiz = await apiCall(`/api/sections/${encodeURIComponent(sectionId)}/quiz`);
+  if (!quiz || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+    alert('This section does not have a quiz yet.');
+    return;
+  }
+  NUMA_NEW._activeQuiz = { sectionId, quiz, answers: {}, startedAt: Date.now() };
+  renderSectionQuizModal();
+}
+
+function renderSectionQuizModal() {
+  const a = NUMA_NEW._activeQuiz;
+  if (!a) return;
+  const { quiz, answers } = a;
+  let qHtml = '';
+  quiz.questions.forEach((q, i) => {
+    qHtml += `
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-body">
+          <div style="font-weight:600;margin-bottom:8px;">${i + 1}. ${escapeHtml(q.question || '')}</div>
+          ${(q.options || []).map((opt, j) => `
+            <label style="display:flex;gap:8px;align-items:center;padding:6px;border-radius:6px;cursor:pointer;${answers[i] === j ? 'background:rgba(163,141,120,0.15);' : ''}">
+              <input type="radio" name="quiz-q-${i}" ${answers[i] === j ? 'checked' : ''} onchange="setQuizAnswer(${i}, ${j})">
+              <span>${escapeHtml(opt)}</span>
+            </label>`).join('')}
+        </div>
+      </div>`;
+  });
+  const modal = document.getElementById('numa-quiz-modal') || (() => {
+    const d = document.createElement('div');
+    d.id = 'numa-quiz-modal';
+    d.style.cssText = 'position:fixed;inset:0;background:rgba(20,15,10,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;';
+    document.body.appendChild(d);
+    return d;
+  })();
+  modal.innerHTML = `
+    <div style="background:var(--cream, #fdfaf6);max-width:680px;width:100%;max-height:90vh;overflow:auto;border-radius:12px;padding:24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h2 style="margin:0;">${escapeHtml(quiz.title || 'Section Quiz')}</h2>
+        <button class="btn btn-ghost btn-sm" onclick="closeSectionQuiz()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      ${quiz.is_optional ? '<p class="text-muted text-sm">This quiz is optional — your progress is saved either way.</p>' : ''}
+      ${qHtml}
+      <button class="btn btn-primary" onclick="submitSectionQuiz()"><i class="fa-solid fa-check"></i> Submit Quiz</button>
+    </div>`;
+}
+
+function setQuizAnswer(qIdx, choiceIdx) {
+  if (!NUMA_NEW._activeQuiz) return;
+  NUMA_NEW._activeQuiz.answers[qIdx] = choiceIdx;
+}
+
+function closeSectionQuiz() {
+  const m = document.getElementById('numa-quiz-modal');
+  if (m) m.remove();
+  NUMA_NEW._activeQuiz = null;
+}
+
+async function submitSectionQuiz() {
+  const a = NUMA_NEW._activeQuiz;
+  if (!a) return;
+  // Re-fetch with admin answer keys not available, so we send answers; server scores would be safer.
+  // Since the public endpoint strips correct answers, we do client-side scoring via a second admin call—
+  // but as a student, we can't. So: we send the chosen indexes and let the backend NOT score
+  // (we'll score 0 if no key). Simpler: store answers, present a self-grade workflow.
+  // Practical approach: also expose a scoring endpoint OR have the editor stash correct_index unprotected.
+  // For now: ask backend for the key via a dedicated scoring call.
+  const startedAt = new Date(a.startedAt).toISOString();
+  const timeSpent = Math.round((Date.now() - a.startedAt) / 1000);
+  const scoringRes = await apiCall(`/api/sections/${encodeURIComponent(a.sectionId)}/quiz/score`, {
+    method: 'POST',
+    body: JSON.stringify({ answers: a.answers })
+  });
+  let score = 0, total = a.quiz.questions.length;
+  if (scoringRes && typeof scoringRes.score === 'number') {
+    score = scoringRes.score;
+    total = scoringRes.total || total;
+  } else {
+    // Fallback: count answered as 0 — server will fix later
+    score = 0;
+  }
+  await apiCall(`/api/sections/${encodeURIComponent(a.sectionId)}/quiz/attempts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      score, total,
+      time_spent_seconds: timeSpent,
+      started_at: startedAt,
+      attempt_data: a.answers
+    })
+  });
+  const pct = total ? Math.round((score / total) * 100) : 0;
+  alert(`Quiz submitted!\nYour score: ${score} / ${total} (${pct}%)\nTime: ${formatDuration(timeSpent)}`);
+  closeSectionQuiz();
+}
+
+// =============================================================================
+// ===== DISCUSSION FORUM =====================================================
+// =============================================================================
+function renderForumList() {
+  setTimeout(loadForumPosts, 0);
+  return `
+    <div class="page-header fade-in">
+      <h1>Discussion Forum</h1>
+      <p>Chat with fellow students and your instructors</p>
+    </div>
+    <div class="card slide-up">
+      <div class="card-body">
+        <textarea id="forum-new" class="input" rows="3" placeholder="Start a new conversation…" style="resize:vertical;"></textarea>
+        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="postForumMessage()"><i class="fa-solid fa-paper-plane"></i> Post</button></div>
+      </div>
+    </div>
+    <div id="forum-list" style="margin-top:14px;"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadForumPosts() {
+  const posts = await apiCall('/api/forum/posts') || [];
+  const target = document.getElementById('forum-list');
+  if (!target) return;
+  if (posts.length === 0) {
+    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">No conversations yet. Be the first to post.</div></div>';
+    return;
+  }
+  let html = '';
+  posts.forEach(p => {
+    const isStaff = p.author_role === 'admin';
+    const pinned = p.is_pinned ? '<i class="fa-solid fa-thumbtack" style="color:var(--terracotta);margin-right:6px;"></i>' : '';
+    html += `
+      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('forum-thread',{id:${p.id}})">
+        <div class="card-body">
+          <div class="text-muted text-sm" style="margin-bottom:6px;">
+            ${pinned}<strong>${escapeHtml(p.author_name || 'User')}</strong>
+            ${isStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
+            • ${new Date(p.created_at).toLocaleString()}
+          </div>
+          <div style="white-space:pre-wrap;">${escapeHtml((p.body || '').slice(0, 280))}${(p.body || '').length > 280 ? '…' : ''}</div>
+          <div class="text-muted text-sm" style="margin-top:8px;"><i class="fa-solid fa-comment"></i> ${p.reply_count || 0} repl${p.reply_count === 1 ? 'y' : 'ies'}</div>
+        </div>
+      </div>`;
+  });
+  target.innerHTML = html;
+}
+
+async function postForumMessage() {
+  const body = (document.getElementById('forum-new')?.value || '').trim();
+  if (!body) { alert('Type a message first.'); return; }
+  const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body }) });
+  if (out) {
+    document.getElementById('forum-new').value = '';
+    loadForumPosts();
+  } else alert('Could not post.');
+}
+
+function renderForumThread() {
+  const id = APP.viewParams?.id;
+  setTimeout(() => loadForumThread(id), 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('forum');return false;">Discussion Forum</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
+    <div id="forum-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+async function loadForumThread(id) {
+  const data = await apiCall(`/api/forum/posts/${id}`);
+  const target = document.getElementById('forum-thread');
+  if (!target || !data) return;
+  const p = data.post;
+  const isStaff = p.author_role === 'admin';
+  const isAdmin = APP.currentUser?.isAdmin;
+  const canDeleteTop = isAdmin || p.user_id === APP.currentUser?.id;
+  let html = `
+    <div class="card slide-up">
+      <div class="card-body">
+        <div class="text-muted text-sm" style="margin-bottom:8px;">
+          <strong>${escapeHtml(p.author_name || 'User')}</strong>
+          ${isStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
+          • ${new Date(p.created_at).toLocaleString()}
+          ${canDeleteTop ? `<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="deleteForumPost(${p.id}, true)"><i class="fa-solid fa-trash"></i></button>` : ''}
+          ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="toggleForumPin(${p.id}, ${!p.is_pinned})">${p.is_pinned ? 'Unpin' : 'Pin'}</button>` : ''}
+        </div>
+        <div style="white-space:pre-wrap;">${escapeHtml(p.body)}</div>
+      </div>
+    </div>`;
+  (data.replies || []).forEach(r => {
+    const rIsStaff = r.author_role === 'admin';
+    const canDelete = isAdmin || r.user_id === APP.currentUser?.id;
+    html += `
+      <div class="card" style="margin-top:10px;${rIsStaff ? 'border-left:4px solid var(--terracotta);' : ''}">
+        <div class="card-body">
+          <div class="text-muted text-sm" style="margin-bottom:6px;">
+            <strong>${escapeHtml(r.author_name || 'User')}</strong>
+            ${rIsStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
+            • ${new Date(r.created_at).toLocaleString()}
+            ${canDelete ? `<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="deleteForumPost(${r.id}, false, ${p.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
+          </div>
+          <div style="white-space:pre-wrap;">${escapeHtml(r.body)}</div>
+        </div>
+      </div>`;
+  });
+  html += `
+    <div class="card" style="margin-top:14px;">
+      <div class="card-body">
+        <textarea id="forum-reply" class="input" rows="3" placeholder="Reply to the thread…" style="resize:vertical;"></textarea>
+        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="replyForumThread(${p.id})"><i class="fa-solid fa-paper-plane"></i> Reply</button></div>
+      </div>
+    </div>`;
+  target.innerHTML = html;
+}
+
+async function replyForumThread(parentId) {
+  const body = (document.getElementById('forum-reply')?.value || '').trim();
+  if (!body) return;
+  const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body, parent_id: parentId }) });
+  if (out) loadForumThread(parentId);
+}
+
+async function deleteForumPost(id, isTop, parentId) {
+  if (!confirm('Delete this post?')) return;
+  await apiCall(`/api/forum/posts/${id}`, { method: 'DELETE' });
+  if (isTop) navigate(APP.currentUser?.isAdmin ? 'admin' : 'forum', APP.currentUser?.isAdmin ? { view: 'forum' } : {});
+  else loadForumThread(parentId);
+}
+
+async function toggleForumPin(id, pin) {
+  await apiCall(`/api/admin/forum/posts/${id}`, { method: 'PUT', body: JSON.stringify({ is_pinned: pin }) });
+  loadForumThread(id);
+}
+
+function renderAdminForum() {
+  // Admins use the same forum UI
+  setTimeout(loadForumPosts, 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Discussion Forum</span></div>
+    <div class="page-header"><h1>Discussion Forum</h1><p>Moderate the student community — pin important threads or remove posts</p></div>
+    <div class="card slide-up">
+      <div class="card-body">
+        <textarea id="forum-new" class="input" rows="3" placeholder="Post an announcement or start a discussion…" style="resize:vertical;"></textarea>
+        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="postForumMessage()"><i class="fa-solid fa-paper-plane"></i> Post</button></div>
+      </div>
+    </div>
+    <div id="forum-list" style="margin-top:14px;"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+// =============================================================================
+// ===== Small helpers =========================================================
+// =============================================================================
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+function escapeAttr(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/"/g, '&quot;').replace(/&/g, '&amp;');
+}
+
+// =============================================================================
+// ===== Extend hashchange routing for new views ==============================
+// =============================================================================
+(function extendPopstate() {
+  window.addEventListener('popstate', () => {
+    const hash = window.location.hash.replace('#', '');
+    const parts = hash.split('/');
+    if (parts[0] === 'progress') navigate('progress');
+    else if (parts[0] === 'questions') navigate('questions');
+    else if (parts[0] === 'question-detail' && parts[1]) navigate('question-detail', { id: parseInt(parts[1], 10) });
+    else if (parts[0] === 'forum') navigate('forum');
+    else if (parts[0] === 'forum-thread' && parts[1]) navigate('forum-thread', { id: parseInt(parts[1], 10) });
+  });
+})();
+
+// =============================================================================
+// ===== Patch module page: "Mark Complete" + "Take Section Quiz" buttons =====
+// =============================================================================
+(function patchModulePage() {
+  if (typeof renderModulePage !== 'function') return;
+  const _orig = renderModulePage;
+  window.renderModulePage = function(moduleId, sectionId) {
+    let html = _orig(moduleId, sectionId);
+    const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => m.id === moduleId) : null;
+    const section = mod && (sectionId ? mod.sections.find(s => s.id === sectionId) : mod.sections[0]);
+    if (!section || section.isQuiz) return html;
+    // Inject buttons below the section content
+    const buttons = `
+      <div class="card slide-up" style="margin-top:16px;">
+        <div class="card-body" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" onclick="markSectionCompleteUI('${section.id}', this)">
+            <i class="fa-solid fa-check"></i> Mark Section Complete
+          </button>
+          <button class="btn btn-secondary" onclick="openSectionQuiz('${section.id}')">
+            <i class="fa-solid fa-clipboard-question"></i> Take Section Quiz (if any)
+          </button>
+          ${APP.currentUser?.isAdmin ? `<button class="btn btn-ghost" onclick="navigate('admin',{view:'section-quiz',sectionId:'${section.id}',moduleId:${moduleId}})"><i class="fa-solid fa-pen"></i> Edit Section Quiz</button>` : ''}
+        </div>
+      </div>`;
+    // Insert before the module-nav-buttons (next/prev) or at end
+    if (html.includes('module-nav-buttons')) {
+      html = html.replace('module-nav-buttons', buttons + '<div class="module-nav-buttons" data-marker="x"');
+    } else {
+      html += buttons;
+    }
+    return html;
+  };
+  renderModulePage = window.renderModulePage;
+})();
+
+async function markSectionCompleteUI(sectionId, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.innerHTML = '<i class="fa-solid fa-check"></i> Completed'; }
+  await markSectionComplete(sectionId, true);
+}
+
+// =============================================================================
+// ===== Extend dashboard with backend progress bar (if available) ============
+// =============================================================================
+(function extendDashboard() {
+  if (typeof renderDashboard !== 'function') return;
+  const _orig = renderDashboard;
+  window.renderDashboard = function() {
+    setTimeout(async () => {
+      await loadMyProgress(true);
+      const overall = overallProgressPct();
+      // If we got server progress, overwrite the dashboard's first progress card
+      const firstFill = document.querySelector('.stat-card .progress-bar-fill');
+      if (firstFill && overall > 0) {
+        firstFill.style.width = overall + '%';
+        const valEl = firstFill.parentElement?.previousElementSibling;
+        if (valEl) valEl.textContent = overall + '%';
+      }
+    }, 0);
+    return _orig();
+  };
+  renderDashboard = window.renderDashboard;
+})();

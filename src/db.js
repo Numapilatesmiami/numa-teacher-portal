@@ -121,6 +121,82 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_scenarios_user ON scenarios(user_id);
       CREATE INDEX IF NOT EXISTS idx_practice_hours_user ON practice_hours(user_id);
       CREATE INDEX IF NOT EXISTS idx_sections_module ON sections(module_id, sort_order);
+
+      -- ===== STUDENT PROGRESS TRACKING =====
+      CREATE TABLE IF NOT EXISTS section_progress (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+        completed BOOLEAN DEFAULT TRUE,
+        completed_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, section_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_section_progress_user ON section_progress(user_id);
+
+      -- ===== OPTIONAL PER-SECTION QUIZZES =====
+      CREATE TABLE IF NOT EXISTS section_quizzes (
+        id SERIAL PRIMARY KEY,
+        section_id TEXT NOT NULL UNIQUE REFERENCES sections(id) ON DELETE CASCADE,
+        title TEXT,
+        time_limit_minutes INTEGER,
+        passing_score INTEGER DEFAULT 70,
+        is_optional BOOLEAN DEFAULT TRUE,
+        questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS section_quiz_attempts (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+        score INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        time_spent_seconds INTEGER,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ DEFAULT NOW(),
+        attempt_data JSONB
+      );
+      CREATE INDEX IF NOT EXISTS idx_section_quiz_attempts_user ON section_quiz_attempts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_section_quiz_attempts_section ON section_quiz_attempts(section_id);
+
+      -- ===== STUDENT QUESTIONS (Q&A inbox to admin) =====
+      CREATE TABLE IF NOT EXISTS student_questions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subject TEXT,
+        body TEXT NOT NULL,
+        module_id TEXT,
+        section_id TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_student_questions_user ON student_questions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_student_questions_status ON student_questions(status, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS question_replies (
+        id SERIAL PRIMARY KEY,
+        question_id INTEGER NOT NULL REFERENCES student_questions(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        author_role TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_question_replies_question ON question_replies(question_id, created_at);
+
+      -- ===== DISCUSSION FORUM =====
+      CREATE TABLE IF NOT EXISTS forum_posts (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        parent_id INTEGER REFERENCES forum_posts(id) ON DELETE CASCADE,
+        is_pinned BOOLEAN DEFAULT FALSE,
+        is_hidden BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_forum_posts_created ON forum_posts(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_posts_parent ON forum_posts(parent_id);
     `);
 
     // Seed default enrollment codes if table is empty

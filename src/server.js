@@ -493,6 +493,453 @@ app.put('/api/admin/reorder-modules', adminRequired, async (req, res) => {
   }
 });
 
+// =========================================================================
+// ===== STUDENT PROGRESS TRACKING =========================================
+// =========================================================================
+
+// Mark a section as complete (or update completion state)
+app.post('/api/progress/sections/:sectionId', authRequired, async (req, res) => {
+  try {
+    const completed = req.body?.completed !== false;
+    const result = await pool.query(
+      `INSERT INTO section_progress (user_id, section_id, completed, completed_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, section_id)
+       DO UPDATE SET completed = EXCLUDED.completed, completed_at = NOW()
+       RETURNING *`,
+      [req.user.id, req.params.sectionId, completed]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to save progress' });
+  }
+});
+
+// Get the current user's progress (per-section + summary)
+app.get('/api/progress/me', authRequired, async (req, res) => {
+  try {
+    const completed = await pool.query(
+      `SELECT sp.section_id, sp.completed, sp.completed_at, s.module_id
+       FROM section_progress sp
+       JOIN sections s ON s.id = sp.section_id
+       WHERE sp.user_id = $1 AND sp.completed = TRUE`,
+      [req.user.id]
+    );
+    const totals = await pool.query(
+      `SELECT s.module_id, COUNT(*)::int AS total
+       FROM sections s
+       JOIN modules m ON m.id = s.module_id AND m.is_published = TRUE
+       GROUP BY s.module_id`
+    );
+    res.json({ completed: completed.rows, totals: totals.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load progress' });
+  }
+});
+
+// Admin: view any student's progress + quiz attempts
+app.get('/api/admin/students/:id/progress', adminRequired, async (req, res) => {
+  try {
+    const progress = await pool.query(
+      `SELECT sp.section_id, sp.completed, sp.completed_at, s.title, s.module_id, m.title AS module_title
+       FROM section_progress sp
+       JOIN sections s ON s.id = sp.section_id
+       JOIN modules m ON m.id = s.module_id
+       WHERE sp.user_id = $1
+       ORDER BY sp.completed_at DESC`,
+      [req.params.id]
+    );
+    const attempts = await pool.query(
+      `SELECT a.*, s.title AS section_title, s.module_id, m.title AS module_title
+       FROM section_quiz_attempts a
+       JOIN sections s ON s.id = a.section_id
+       JOIN modules m ON m.id = s.module_id
+       WHERE a.user_id = $1
+       ORDER BY a.completed_at DESC`,
+      [req.params.id]
+    );
+    res.json({ progress: progress.rows, section_quiz_attempts: attempts.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load student progress' });
+  }
+});
+
+// =========================================================================
+// ===== OPTIONAL PER-SECTION QUIZZES ======================================
+// =========================================================================
+
+// Public: get the quiz for a section (without correct answers for students)
+app.get('/api/sections/:sectionId/quiz', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, section_id, title, time_limit_minutes, passing_score, is_optional, questions FROM section_quizzes WHERE section_id = $1',
+      [req.params.sectionId]
+    );
+    if (result.rowCount === 0) return res.json(null);
+    const quiz = result.rows[0];
+    // For students, strip correct answers; admins get the full thing
+    if (req.user.role !== 'admin' && Array.isArray(quiz.questions)) {
+      quiz.questions = quiz.questions.map((q) => {
+        const { correct, correct_index, answer, explanation, ...rest } = q || {};
+        return rest;
+      });
+    }
+    res.json(quiz);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load quiz' });
+  }
+});
+
+// Admin: create or replace a section quiz (upsert)
+app.put('/api/admin/sections/:sectionId/quiz', adminRequired, async (req, res) => {
+  try {
+    const { title, time_limit_minutes, passing_score, is_optional, questions } = req.body || {};
+    if (!Array.isArray(questions)) return res.status(400).json({ error: 'questions array required' });
+    const result = await pool.query(
+      `INSERT INTO section_quizzes (section_id, title, time_limit_minutes, passing_score, is_optional, questions, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())
+       ON CONFLICT (section_id)
+       DO UPDATE SET title = EXCLUDED.title, time_limit_minutes = EXCLUDED.time_limit_minutes,
+         passing_score = EXCLUDED.passing_score, is_optional = EXCLUDED.is_optional,
+         questions = EXCLUDED.questions, updated_at = NOW()
+       RETURNING *`,
+      [
+        req.params.sectionId,
+        title || 'Section Quiz',
+        time_limit_minutes || null,
+        passing_score ?? 70,
+        is_optional !== false,
+        JSON.stringify(questions)
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to save quiz' });
+  }
+});
+
+// Admin: delete a section quiz
+app.delete('/api/admin/sections/:sectionId/quiz', adminRequired, async (req, res) => {
+  await pool.query('DELETE FROM section_quizzes WHERE section_id = $1', [req.params.sectionId]);
+  res.json({ ok: true });
+});
+
+// Student: submit answers and get scored (server-side; correct answers never leave the server)
+app.post('/api/sections/:sectionId/quiz/score', authRequired, async (req, res) => {
+  try {
+    const { answers } = req.body || {};
+    const q = await pool.query('SELECT questions FROM section_quizzes WHERE section_id = $1', [req.params.sectionId]);
+    if (q.rowCount === 0) return res.status(404).json({ error: 'No quiz' });
+    const questions = Array.isArray(q.rows[0].questions) ? q.rows[0].questions : [];
+    let score = 0;
+    questions.forEach((qq, i) => {
+      const chosen = answers?.[i];
+      const correct = (typeof qq.correct_index === 'number') ? qq.correct_index
+        : (typeof qq.correct === 'number') ? qq.correct
+        : (typeof qq.answer === 'number') ? qq.answer
+        : null;
+      if (correct !== null && chosen === correct) score += 1;
+    });
+    res.json({ score, total: questions.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Scoring failed' });
+  }
+});
+
+// Student: submit a section-quiz attempt (with timing)
+app.post('/api/sections/:sectionId/quiz/attempts', authRequired, async (req, res) => {
+  try {
+    const { score, total, time_spent_seconds, started_at, attempt_data } = req.body || {};
+    if (typeof score !== 'number' || typeof total !== 'number') {
+      return res.status(400).json({ error: 'score and total are required numbers' });
+    }
+    const result = await pool.query(
+      `INSERT INTO section_quiz_attempts (user_id, section_id, score, total, time_spent_seconds, started_at, attempt_data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        req.user.id,
+        req.params.sectionId,
+        score,
+        total,
+        time_spent_seconds || null,
+        started_at || null,
+        attempt_data ? JSON.stringify(attempt_data) : null
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to save attempt' });
+  }
+});
+
+// Student: view own attempts for a section
+app.get('/api/sections/:sectionId/quiz/attempts', authRequired, async (req, res) => {
+  const result = await pool.query(
+    `SELECT * FROM section_quiz_attempts WHERE user_id = $1 AND section_id = $2 ORDER BY completed_at DESC`,
+    [req.user.id, req.params.sectionId]
+  );
+  res.json(result.rows);
+});
+
+// Admin: all attempts across all students (with student info)
+app.get('/api/admin/section-quiz-attempts', adminRequired, async (req, res) => {
+  try {
+    const filters = [];
+    const params = [];
+    if (req.query.section_id) { params.push(req.query.section_id); filters.push(`a.section_id = $${params.length}`); }
+    if (req.query.user_id) { params.push(req.query.user_id); filters.push(`a.user_id = $${params.length}`); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const result = await pool.query(
+      `SELECT a.*, u.full_name, u.username, s.title AS section_title, s.module_id, m.title AS module_title
+       FROM section_quiz_attempts a
+       JOIN users u ON u.id = a.user_id
+       JOIN sections s ON s.id = a.section_id
+       JOIN modules m ON m.id = s.module_id
+       ${where}
+       ORDER BY a.completed_at DESC
+       LIMIT 500`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load attempts' });
+  }
+});
+
+// =========================================================================
+// ===== STUDENT Q&A (private to admin) ====================================
+// =========================================================================
+
+// Student: submit a question
+app.post('/api/questions', authRequired, async (req, res) => {
+  try {
+    const { subject, body, module_id, section_id } = req.body || {};
+    if (!body || !body.trim()) return res.status(400).json({ error: 'Question body required' });
+    const result = await pool.query(
+      `INSERT INTO student_questions (user_id, subject, body, module_id, section_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.user.id, subject || null, body.trim(), module_id || null, section_id || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to submit question' });
+  }
+});
+
+// Student: list own questions (with replies)
+app.get('/api/questions', authRequired, async (req, res) => {
+  try {
+    const qs = await pool.query(
+      `SELECT q.*, (SELECT COUNT(*) FROM question_replies r WHERE r.question_id = q.id)::int AS reply_count
+       FROM student_questions q
+       WHERE q.user_id = $1
+       ORDER BY q.updated_at DESC`,
+      [req.user.id]
+    );
+    res.json(qs.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load questions' });
+  }
+});
+
+// Get a single question + its reply thread (student only sees own; admin sees all)
+app.get('/api/questions/:id', authRequired, async (req, res) => {
+  try {
+    const qRes = await pool.query(
+      `SELECT q.*, u.full_name AS student_name, u.username AS student_username
+       FROM student_questions q
+       JOIN users u ON u.id = q.user_id
+       WHERE q.id = $1`,
+      [req.params.id]
+    );
+    if (qRes.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    const q = qRes.rows[0];
+    if (req.user.role !== 'admin' && q.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const rRes = await pool.query(
+      `SELECT r.*, u.full_name AS author_name
+       FROM question_replies r
+       JOIN users u ON u.id = r.author_id
+       WHERE r.question_id = $1
+       ORDER BY r.created_at ASC`,
+      [req.params.id]
+    );
+    res.json({ question: q, replies: rRes.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load question' });
+  }
+});
+
+// Post a reply (student or admin)
+app.post('/api/questions/:id/replies', authRequired, async (req, res) => {
+  try {
+    const { body } = req.body || {};
+    if (!body || !body.trim()) return res.status(400).json({ error: 'Reply body required' });
+    const qRes = await pool.query('SELECT user_id FROM student_questions WHERE id = $1', [req.params.id]);
+    if (qRes.rowCount === 0) return res.status(404).json({ error: 'Question not found' });
+    if (req.user.role !== 'admin' && qRes.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const result = await pool.query(
+      `INSERT INTO question_replies (question_id, author_id, author_role, body)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.params.id, req.user.id, req.user.role, body.trim()]
+    );
+    // Update parent question status + timestamp
+    const newStatus = req.user.role === 'admin' ? 'answered' : 'open';
+    await pool.query(
+      `UPDATE student_questions SET status = $1, updated_at = NOW() WHERE id = $2`,
+      [newStatus, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to post reply' });
+  }
+});
+
+// Admin: list ALL student questions
+app.get('/api/admin/questions', adminRequired, async (req, res) => {
+  try {
+    const status = req.query.status; // optional filter
+    const params = [];
+    let where = '';
+    if (status) { params.push(status); where = `WHERE q.status = $${params.length}`; }
+    const result = await pool.query(
+      `SELECT q.*, u.full_name AS student_name, u.username AS student_username,
+        (SELECT COUNT(*) FROM question_replies r WHERE r.question_id = q.id)::int AS reply_count
+       FROM student_questions q
+       JOIN users u ON u.id = q.user_id
+       ${where}
+       ORDER BY q.updated_at DESC
+       LIMIT 500`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load questions' });
+  }
+});
+
+// Admin: mark question status (open / answered / closed)
+app.put('/api/admin/questions/:id/status', adminRequired, async (req, res) => {
+  const { status } = req.body || {};
+  if (!['open', 'answered', 'closed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const result = await pool.query(
+    `UPDATE student_questions SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    [status, req.params.id]
+  );
+  res.json(result.rows[0]);
+});
+
+// Admin: delete a question
+app.delete('/api/admin/questions/:id', adminRequired, async (req, res) => {
+  await pool.query('DELETE FROM student_questions WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// =========================================================================
+// ===== DISCUSSION FORUM (everyone sees) ==================================
+// =========================================================================
+
+app.get('/api/forum/posts', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.*, u.full_name AS author_name, u.role AS author_role,
+        (SELECT COUNT(*) FROM forum_posts c WHERE c.parent_id = p.id AND c.is_hidden = FALSE)::int AS reply_count
+       FROM forum_posts p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.parent_id IS NULL AND p.is_hidden = FALSE
+       ORDER BY p.is_pinned DESC, p.created_at DESC
+       LIMIT 200`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load forum' });
+  }
+});
+
+app.get('/api/forum/posts/:id', authRequired, async (req, res) => {
+  try {
+    const top = await pool.query(
+      `SELECT p.*, u.full_name AS author_name, u.role AS author_role
+       FROM forum_posts p JOIN users u ON u.id = p.user_id
+       WHERE p.id = $1 AND p.is_hidden = FALSE`,
+      [req.params.id]
+    );
+    if (top.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    const replies = await pool.query(
+      `SELECT p.*, u.full_name AS author_name, u.role AS author_role
+       FROM forum_posts p JOIN users u ON u.id = p.user_id
+       WHERE p.parent_id = $1 AND p.is_hidden = FALSE
+       ORDER BY p.created_at ASC`,
+      [req.params.id]
+    );
+    res.json({ post: top.rows[0], replies: replies.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load post' });
+  }
+});
+
+app.post('/api/forum/posts', authRequired, async (req, res) => {
+  try {
+    const { body, parent_id } = req.body || {};
+    if (!body || !body.trim()) return res.status(400).json({ error: 'Message required' });
+    const result = await pool.query(
+      `INSERT INTO forum_posts (user_id, body, parent_id) VALUES ($1, $2, $3) RETURNING *`,
+      [req.user.id, body.trim(), parent_id || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to post' });
+  }
+});
+
+// Author can delete own post; admin can delete any
+app.delete('/api/forum/posts/:id', authRequired, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT user_id FROM forum_posts WHERE id = $1', [req.params.id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role !== 'admin' && r.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await pool.query('DELETE FROM forum_posts WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+// Admin: pin / hide moderation
+app.put('/api/admin/forum/posts/:id', adminRequired, async (req, res) => {
+  const { is_pinned, is_hidden } = req.body || {};
+  const result = await pool.query(
+    `UPDATE forum_posts SET
+      is_pinned = COALESCE($1, is_pinned),
+      is_hidden = COALESCE($2, is_hidden)
+     WHERE id = $3 RETURNING *`,
+    [is_pinned ?? null, is_hidden ?? null, req.params.id]
+  );
+  res.json(result.rows[0]);
+});
+
 // ===== MEDIA UPLOAD (admin only, images) =====
 app.post('/api/admin/upload', adminRequired, (req, res) => {
   upload.single('file')(req, res, (err) => {
