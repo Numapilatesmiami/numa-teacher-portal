@@ -2262,24 +2262,157 @@ function hydrateModuleForm(m) {
 
   const list = document.getElementById('sections-list');
   if (list) {
-    const sections = (m.sections || []);
-    if (!sections.length) {
-      list.innerHTML = '<p class="text-muted">No sections yet. Click "Add Section" to create one.</p>';
-    } else {
-      list.innerHTML = sections.map((s, idx) => `
-        <div style="padding:12px;border:1px solid var(--cream-darker);border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:200px;">
-            <strong>${idx + 1}. ${escapeHtml(s.title)}</strong>
-            <div class="text-muted" style="font-size:0.8rem;">${(s.content || '').length} characters</div>
-          </div>
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-secondary btn-sm" onclick="navigate('admin',{view:'editSection',moduleId:'${m.id}',sectionId:'${s.id}'})"><i class="fa-solid fa-pen"></i> Edit</button>
-            <button class="btn btn-secondary btn-sm" onclick="deleteSectionConfirm('${s.id}','${escapeAttr(s.title)}','${m.id}')"><i class="fa-solid fa-trash"></i></button>
-          </div>
-        </div>
-      `).join('');
-    }
+    renderSortableSections(m, list);
   }
+}
+
+// Module-level state for tracking the current section order (used during drag/arrow ops)
+let _currentSectionOrder = { moduleId: null, ids: [] };
+
+function renderSortableSections(m, container) {
+  const sections = (m.sections || []);
+  _currentSectionOrder = { moduleId: m.id, ids: sections.map(s => String(s.id)) };
+  if (!sections.length) {
+    container.innerHTML = '<p class="text-muted">No sections yet. Click "Add Section" to create one.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <div style="margin-bottom:10px;padding:8px 12px;background:var(--cream-dark);border-radius:6px;font-size:0.85rem;color:var(--charcoal-light);">
+      <i class="fa-solid fa-arrows-up-down"></i> Drag rows to reorder, or use the arrow buttons. Changes save automatically.
+    </div>
+    <div id="sortable-sections">
+      ${sections.map((s, idx) => sortableSectionRow(s, idx, sections.length, m.id)).join('')}
+    </div>
+    <div id="reorder-status" style="margin-top:10px;"></div>
+  `;
+  attachSortableHandlers(m.id);
+}
+
+function sortableSectionRow(s, idx, total, moduleId) {
+  return `
+    <div class="sortable-row" draggable="true" data-section-id="${escapeAttr(s.id)}" data-module-id="${escapeAttr(moduleId)}"
+         style="padding:12px;border:1px solid var(--cream-darker);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;cursor:move;transition:all 0.15s;">
+      <div style="color:var(--charcoal-light);cursor:grab;padding:0 6px;" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></div>
+      <div class="section-index" style="width:28px;height:28px;border-radius:50%;background:var(--terracotta);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:0.85rem;flex-shrink:0;">${idx + 1}</div>
+      <div style="flex:1;min-width:200px;">
+        <strong>${escapeHtml(s.title)}</strong>
+        <div class="text-muted" style="font-size:0.8rem;">${(s.content || '').length} characters</div>
+      </div>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-ghost btn-sm" onclick="moveSectionArrow('${escapeAttr(moduleId)}','${escapeAttr(s.id)}',-1)" ${idx === 0 ? 'disabled style="opacity:0.3;"' : ''} title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="moveSectionArrow('${escapeAttr(moduleId)}','${escapeAttr(s.id)}',1)" ${idx === total - 1 ? 'disabled style="opacity:0.3;"' : ''} title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
+        <button class="btn btn-secondary btn-sm" onclick="navigate('admin',{view:'editSection',moduleId:'${escapeAttr(moduleId)}',sectionId:'${escapeAttr(s.id)}'})"><i class="fa-solid fa-pen"></i> Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="deleteSectionConfirm('${escapeAttr(s.id)}','${escapeAttr(s.title)}','${escapeAttr(moduleId)}')"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    </div>
+  `;
+}
+
+function attachSortableHandlers(moduleId) {
+  const container = document.getElementById('sortable-sections');
+  if (!container) return;
+  let draggedEl = null;
+
+  container.querySelectorAll('.sortable-row').forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      draggedEl = row;
+      row.style.opacity = '0.4';
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', row.dataset.sectionId);
+    });
+    row.addEventListener('dragend', () => {
+      row.style.opacity = '1';
+      container.querySelectorAll('.sortable-row').forEach(r => r.style.borderColor = 'var(--cream-darker)');
+      draggedEl = null;
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (row === draggedEl) return;
+      row.style.borderColor = 'var(--terracotta)';
+    });
+    row.addEventListener('dragleave', () => {
+      row.style.borderColor = 'var(--cream-darker)';
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!draggedEl || row === draggedEl) return;
+      const rows = Array.from(container.querySelectorAll('.sortable-row'));
+      const draggedIdx = rows.indexOf(draggedEl);
+      const targetIdx = rows.indexOf(row);
+      if (draggedIdx < targetIdx) {
+        row.parentNode.insertBefore(draggedEl, row.nextSibling);
+      } else {
+        row.parentNode.insertBefore(draggedEl, row);
+      }
+      commitSectionOrder(moduleId);
+    });
+  });
+}
+
+function commitSectionOrder(moduleId) {
+  const container = document.getElementById('sortable-sections');
+  if (!container) return;
+  const rows = Array.from(container.querySelectorAll('.sortable-row'));
+  const newIds = rows.map(r => r.dataset.sectionId);
+  // Renumber the visible badges
+  rows.forEach((r, i) => {
+    const badge = r.querySelector('.section-index');
+    if (badge) badge.textContent = String(i + 1);
+    // Toggle arrow disabled states
+    const ups = r.querySelectorAll('.fa-arrow-up');
+    const downs = r.querySelectorAll('.fa-arrow-down');
+    ups.forEach(u => {
+      const btn = u.closest('button');
+      if (i === 0) { btn.setAttribute('disabled', ''); btn.style.opacity = '0.3'; }
+      else { btn.removeAttribute('disabled'); btn.style.opacity = ''; }
+    });
+    downs.forEach(d => {
+      const btn = d.closest('button');
+      if (i === rows.length - 1) { btn.setAttribute('disabled', ''); btn.style.opacity = '0.3'; }
+      else { btn.removeAttribute('disabled'); btn.style.opacity = ''; }
+    });
+  });
+  _currentSectionOrder = { moduleId, ids: newIds };
+  saveSectionOrder(moduleId, newIds);
+}
+
+async function saveSectionOrder(moduleId, sectionIds) {
+  const statusEl = document.getElementById('reorder-status');
+  if (statusEl) statusEl.innerHTML = '<span class="text-muted"><i class="fa-solid fa-arrows-rotate fa-spin"></i> Saving new order…</span>';
+  if (!API_BASE) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--warning);">Reordering needs the backend connected.</span>';
+    return;
+  }
+  const result = await apiCall(`/api/admin/modules/${moduleId}/reorder-sections`, {
+    method: 'PUT',
+    body: JSON.stringify({ section_ids: sectionIds })
+  });
+  if (result && result.ok) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Order saved.</span>';
+    _adminModulesCache = null;
+    setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
+  } else {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--error);">Save failed. Try again.</span>';
+  }
+}
+
+function moveSectionArrow(moduleId, sectionId, direction) {
+  const container = document.getElementById('sortable-sections');
+  if (!container) return;
+  const rows = Array.from(container.querySelectorAll('.sortable-row'));
+  const idx = rows.findIndex(r => r.dataset.sectionId === String(sectionId));
+  if (idx === -1) return;
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= rows.length) return;
+  const moving = rows[idx];
+  const target = rows[newIdx];
+  if (direction > 0) {
+    target.parentNode.insertBefore(moving, target.nextSibling);
+  } else {
+    target.parentNode.insertBefore(moving, target);
+  }
+  commitSectionOrder(moduleId);
 }
 
 async function saveModule(moduleId, isNew) {

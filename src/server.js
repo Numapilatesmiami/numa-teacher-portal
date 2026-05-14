@@ -437,6 +437,62 @@ app.put('/api/admin/students/:id/password', adminRequired, async (req, res) => {
   }
 });
 
+// ===== ADMIN: REORDER SECTIONS (bulk update sort_order) =====
+app.put('/api/admin/modules/:moduleId/reorder-sections', adminRequired, async (req, res) => {
+  try {
+    const { section_ids } = req.body; // array of section IDs in new order
+    if (!Array.isArray(section_ids)) return res.status(400).json({ error: 'section_ids array required' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (let i = 0; i < section_ids.length; i++) {
+        await client.query(
+          'UPDATE sections SET sort_order = $1, updated_at = NOW() WHERE id = $2 AND module_id = $3',
+          [i + 1, section_ids[i], req.params.moduleId]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true, reordered: section_ids.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Reorder failed' });
+  }
+});
+
+// ===== ADMIN: REORDER MODULES =====
+app.put('/api/admin/reorder-modules', adminRequired, async (req, res) => {
+  try {
+    const { module_ids } = req.body;
+    if (!Array.isArray(module_ids)) return res.status(400).json({ error: 'module_ids array required' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (let i = 0; i < module_ids.length; i++) {
+        await client.query(
+          'UPDATE modules SET sort_order = $1, updated_at = NOW() WHERE id = $2',
+          [i + 1, module_ids[i]]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true, reordered: module_ids.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Reorder failed' });
+  }
+});
+
 // ===== MEDIA UPLOAD (admin only, images) =====
 app.post('/api/admin/upload', adminRequired, (req, res) => {
   upload.single('file')(req, res, (err) => {
