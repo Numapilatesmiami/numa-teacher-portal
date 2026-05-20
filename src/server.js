@@ -48,6 +48,16 @@ app.use(cors({ origin: '*', credentials: false }));
 app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, { maxAge: '7d' }));
 
+// ===== STATIC FRONTEND (portal files served from /public) =====
+// Serve index.html, app.js, styles.css, etc. from the repo's /public folder.
+const PUBLIC_ROOT = path.join(__dirname, '..', 'public');
+if (fs.existsSync(PUBLIC_ROOT)) {
+  app.use(express.static(PUBLIC_ROOT, { maxAge: '1h', index: 'index.html' }));
+  console.log('[server] Serving portal frontend from', PUBLIC_ROOT);
+} else {
+  console.log('[server] No public folder found; running API-only');
+}
+
 // ===== AUTH MIDDLEWARE =====
 function authRequired(req, res, next) {
   const auth = req.headers.authorization;
@@ -955,6 +965,16 @@ app.post('/api/admin/upload', adminRequired, (req, res) => {
       mimetype: req.file.mimetype
     });
   });
+});
+
+// ===== SPA FALLBACK =====
+// Any non-API, non-upload GET that doesn't match a real file gets index.html
+// so the portal's hash routing works on direct visits.
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
+  const indexFile = path.join(PUBLIC_ROOT, 'index.html');
+  if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
+  next();
 });
 
 // ===== START =====
