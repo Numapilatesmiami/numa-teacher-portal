@@ -1440,11 +1440,42 @@ button, input, select, textarea {
 
   /* Main content fills the full width with generous breathing room */
   .main-content {
-    max-width: 1100px;
+    max-width: 1240px;
     width: 100%;
     margin: 0 auto;
-    padding: 48px 40px;
+    padding: 40px 32px;
   }
+}
+
+/* Tighten the spacing between page header, stats, and modules grid —
+   Apple pages keep content tight and intentional, not floating in a void. */
+.page-header {
+  margin-bottom: 24px;
+}
+.page-header h1 {
+  letter-spacing: -0.02em;
+}
+.page-header p {
+  margin-top: 4px;
+  color: var(--charcoal-muted);
+}
+.stats-grid {
+  margin-bottom: 28px;
+}
+/* Section headings on the dashboard ("Course Modules", "Recent Activity") */
+.main-content h2 {
+  margin-top: 28px !important;
+  margin-bottom: 16px !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--charcoal);
+}
+/* First h2 after stats should be tight */
+.stats-grid + h2 {
+  margin-top: 12px !important;
+}
+.modules-grid {
+  gap: 20px;
 }
 
 /* On small screens keep the mobile drawer behavior already defined */
