@@ -2668,7 +2668,9 @@ async function handleImageUpload(input) {
     });
     const data = await res.json();
     if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
-    const imgUrl = data.absoluteUrl || (API_BASE + data.url);
+    let imgUrl = data.absoluteUrl || (API_BASE + data.url);
+    // Force HTTPS — browsers block mixed content on HTTPS pages.
+    if (imgUrl.startsWith('http://')) imgUrl = imgUrl.replace(/^http:\/\//, 'https://');
     // Replace placeholder with real image
     editor.innerHTML = editor.innerHTML.replace(placeholder, `<p><img src="${imgUrl}" alt="${escapeAttr(file.name)}" style="max-width:100%;height:auto;border-radius:8px;display:block;margin:16px auto;"></p>`);
   } catch (err) {

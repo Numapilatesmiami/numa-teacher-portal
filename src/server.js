@@ -956,10 +956,14 @@ app.post('/api/admin/upload', adminRequired, (req, res) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const publicUrl = `/uploads/${req.file.filename}`;
+    // Force https — Railway terminates TLS at the proxy, so req.protocol is 'http'
+    // even though the request came over HTTPS. Browsers block mixed content.
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const proto = (forwardedProto && forwardedProto.split(',')[0].trim()) || (req.secure ? 'https' : 'https');
     res.json({
       ok: true,
       url: publicUrl,
-      absoluteUrl: `${req.protocol}://${req.get('host')}${publicUrl}`,
+      absoluteUrl: `${proto}://${req.get('host')}${publicUrl}`,
       filename: req.file.filename,
       size: req.file.size,
       mimetype: req.file.mimetype
