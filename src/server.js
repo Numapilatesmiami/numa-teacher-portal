@@ -950,6 +950,84 @@ app.put('/api/admin/forum/posts/:id', adminRequired, async (req, res) => {
   res.json(result.rows[0]);
 });
 
+// ===== MODULE QUIZ OVERRIDES (admin can edit module-end quiz questions) =====
+// GET: returns saved override (or null if none — frontend uses hardcoded default)
+app.get('/api/admin/module-quiz/:moduleId', adminRequired, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    const r = await pool.query(
+      'SELECT module_id, questions, updated_at FROM module_quiz_overrides WHERE module_id = $1',
+      [String(moduleId)]
+    );
+    if (!r.rows.length) return res.json({ override: null });
+    res.json({ override: r.rows[0] });
+  } catch (e) {
+    console.error('GET module-quiz error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT: save (insert or update) the override for a module
+app.put('/api/admin/module-quiz/:moduleId', adminRequired, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    const { questions } = req.body;
+    if (!Array.isArray(questions)) {
+      return res.status(400).json({ error: 'questions must be an array' });
+    }
+    // Light validation — each item must have q (string), opts (array of ≥2), correct (int)
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      if (!q || typeof q.q !== 'string' || !q.q.trim()) {
+        return res.status(400).json({ error: `Question ${i + 1}: missing question text` });
+      }
+      if (!Array.isArray(q.opts) || q.opts.length < 2) {
+        return res.status(400).json({ error: `Question ${i + 1}: need at least 2 options` });
+      }
+      if (!Number.isInteger(q.correct) || q.correct < 0 || q.correct >= q.opts.length) {
+        return res.status(400).json({ error: `Question ${i + 1}: invalid correct-answer index` });
+      }
+    }
+    const r = await pool.query(
+      `INSERT INTO module_quiz_overrides (module_id, questions, updated_at, updated_by)
+       VALUES ($1, $2::jsonb, NOW(), $3)
+       ON CONFLICT (module_id) DO UPDATE
+       SET questions = EXCLUDED.questions, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+       RETURNING module_id, questions, updated_at`,
+      [String(moduleId), JSON.stringify(questions), req.user.id]
+    );
+    res.json({ ok: true, override: r.rows[0] });
+  } catch (e) {
+    console.error('PUT module-quiz error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE: revert a module to the hardcoded default quiz
+app.delete('/api/admin/module-quiz/:moduleId', adminRequired, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    await pool.query('DELETE FROM module_quiz_overrides WHERE module_id = $1', [String(moduleId)]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE module-quiz error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUBLIC (any logged-in user): fetch all overrides at once so frontend can merge
+app.get('/api/module-quiz-overrides', authRequired, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT module_id, questions FROM module_quiz_overrides');
+    const map = {};
+    r.rows.forEach(row => { map[row.module_id] = row.questions; });
+    res.json({ overrides: map });
+  } catch (e) {
+    console.error('GET module-quiz-overrides error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ===== MEDIA UPLOAD (admin only, images) =====
 app.post('/api/admin/upload', adminRequired, (req, res) => {
   upload.single('file')(req, res, (err) => {

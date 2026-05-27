@@ -2272,6 +2272,14 @@ function renderModuleEditor(moduleId) {
       </div>
       <div id="sections-list"><p class="text-muted">Loading sections...</p></div>
     </div></div>
+
+    <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px;">
+        <h3 style="margin:0;"><i class="fa-solid fa-question-circle"></i> Module-End Quiz</h3>
+        <button class="btn btn-primary btn-sm" onclick="navigate('admin',{view:'editModuleQuiz',moduleId:'${moduleId}'})"><i class="fa-solid fa-pen"></i> Edit Questions &amp; Answers</button>
+      </div>
+      <p class="text-muted" style="margin:0;">The required quiz students take at the end of this module (80% to pass). Edit individual questions, answer choices, and correct answers.</p>
+    </div></div>
     `}
   `;
 }
@@ -3057,6 +3065,7 @@ async function markSectionComplete(sectionId, completed = true) {
     if (p.view === 'attempts') return renderAdminAttempts();
     if (p.view === 'forum') return renderAdminForum();
     if (p.view === 'section-quiz') return renderAdminSectionQuizEditor();
+    if (p.view === 'editModuleQuiz') return renderAdminModuleQuizEditor(p.moduleId);
     return _origAdmin();
   };
   renderAdminContent = window.renderAdminContent;
@@ -3931,4 +3940,285 @@ async function markSectionCompleteUI(sectionId, btnEl) {
     return _orig();
   };
   renderDashboard = window.renderDashboard;
+})();
+
+// =============================================================================
+// ===== MODULE-END QUIZ EDITOR (admin) =========================================
+// =============================================================================
+// Lets admin edit the questions/answers for the required end-of-module quiz.
+// Saves to backend (module_quiz_overrides table). On app load, overrides are
+// fetched and merged into COURSE_MODULES so students see the edited version.
+// =============================================================================
+
+// State for the in-progress quiz edit (mutated by UI handlers)
+window._mqEditState = null;
+
+function renderAdminModuleQuizEditor(moduleId) {
+  const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => String(m.id) === String(moduleId)) : null;
+  if (!mod) {
+    return `<div class="page-header fade-in"><h1>Module Not Found</h1></div>
+      <button class="btn btn-secondary" onclick="navigate('admin',{view:'modules'})">Back to Modules</button>`;
+  }
+  // Kick off async load
+  setTimeout(() => loadModuleQuizForEdit(moduleId), 50);
+  return `
+    <div class="breadcrumb fade-in">
+      <a href="#" onclick="navigate('admin',{view:'modules'});return false;">Modules</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <a href="#" onclick="navigate('admin',{view:'editModule',moduleId:'${escapeAttr(moduleId)}'});return false;">${escapeHtml(mod.title)}</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <span>Edit Quiz</span>
+    </div>
+    <div class="page-header fade-in" style="margin-top:8px;">
+      <h1><i class="fa-solid fa-question-circle"></i> Module ${escapeHtml(String(mod.id))} Quiz Editor</h1>
+      <p>${escapeHtml(mod.title)} &middot; Edit questions, answer choices, and the correct answer.</p>
+    </div>
+    <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-secondary" onclick="navigate('admin',{view:'editModule',moduleId:'${escapeAttr(moduleId)}'})"><i class="fa-solid fa-arrow-left"></i> Back to Module</button>
+      <button class="btn btn-secondary" onclick="resetModuleQuizToDefault('${escapeAttr(moduleId)}')" title="Revert to the hardcoded default questions"><i class="fa-solid fa-rotate-left"></i> Reset to default</button>
+    </div>
+    <div id="mq-editor-body"><p class="text-muted">Loading quiz...</p></div>
+  `;
+}
+
+async function loadModuleQuizForEdit(moduleId) {
+  const mod = COURSE_MODULES.find(m => String(m.id) === String(moduleId));
+  if (!mod) return;
+  let questions = null;
+  let isOverride = false;
+  if (API_BASE) {
+    try {
+      const res = await apiCall(`/api/admin/module-quiz/${encodeURIComponent(moduleId)}`);
+      if (res && res.override && Array.isArray(res.override.questions)) {
+        questions = res.override.questions;
+        isOverride = true;
+      }
+    } catch (e) {
+      console.warn('Could not load override, using default', e);
+    }
+  }
+  // Fall back to the hardcoded default (deep clone so edits don't mutate it)
+  if (!questions) {
+    questions = JSON.parse(JSON.stringify(mod.quiz || []));
+  }
+  window._mqEditState = { moduleId, questions, isOverride, originalSnapshot: JSON.stringify(questions) };
+  renderModuleQuizEditorBody();
+}
+
+function renderModuleQuizEditorBody() {
+  const state = window._mqEditState;
+  const body = document.getElementById('mq-editor-body');
+  if (!state || !body) return;
+  const { questions, isOverride } = state;
+  body.innerHTML = `
+    <div class="card slide-up"><div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <strong>${questions.length} question${questions.length === 1 ? '' : 's'}</strong>
+          ${isOverride ? '<span class="badge" style="background:var(--cream-dark);color:var(--charcoal);margin-left:8px;">Custom (saved override)</span>' : '<span class="badge" style="background:var(--cream-dark);color:var(--charcoal-muted);margin-left:8px;">Default (no override yet)</span>'}
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="addModuleQuizQuestion()"><i class="fa-solid fa-plus"></i> Add question</button>
+          <button class="btn btn-primary btn-sm" onclick="saveModuleQuizOverride()"><i class="fa-solid fa-floppy-disk"></i> Save changes</button>
+        </div>
+      </div>
+      <div id="mq-questions-list">
+        ${questions.map((q, i) => renderModuleQuizQuestionRow(q, i)).join('')}
+      </div>
+      <div id="mq-save-status" style="margin-top:12px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <button class="btn btn-secondary btn-sm" onclick="addModuleQuizQuestion()"><i class="fa-solid fa-plus"></i> Add question</button>
+        <button class="btn btn-primary btn-sm" onclick="saveModuleQuizOverride()"><i class="fa-solid fa-floppy-disk"></i> Save changes</button>
+      </div>
+    </div></div>
+  `;
+}
+
+function renderModuleQuizQuestionRow(q, idx) {
+  const opts = q.opts || [];
+  const correct = (typeof q.correct === 'number') ? q.correct : 0;
+  return `
+    <div class="card" style="margin-bottom:12px;border:1px solid var(--cream-darker);"><div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+        <strong style="font-size:0.95rem;">Question ${idx + 1}</strong>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="moveModuleQuizQuestion(${idx},-1)" ${idx === 0 ? 'disabled style="opacity:0.3;"' : ''} title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
+          <button class="btn btn-ghost btn-sm" onclick="moveModuleQuizQuestion(${idx},1)" title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteModuleQuizQuestion(${idx})" title="Delete this question" style="color:var(--error);"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label style="font-size:0.85rem;">Question text</label>
+        <textarea class="form-control" rows="2" oninput="updateMqField(${idx},'q',this.value)">${escapeHtml(q.q || '')}</textarea>
+      </div>
+      <div style="margin-top:8px;">
+        <label style="font-size:0.85rem;display:block;margin-bottom:6px;">Answer choices &middot; <span class="text-muted">click the radio to mark the correct answer</span></label>
+        ${opts.map((opt, optIdx) => `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <input type="radio" name="mq-correct-${idx}" ${optIdx === correct ? 'checked' : ''} onchange="updateMqCorrect(${idx}, ${optIdx})" style="margin:0;">
+            <input type="text" class="form-control" value="${escapeAttr(opt)}" oninput="updateMqOption(${idx}, ${optIdx}, this.value)" placeholder="Option ${optIdx + 1}" style="flex:1;">
+            <button class="btn btn-ghost btn-sm" onclick="deleteMqOption(${idx}, ${optIdx})" ${opts.length <= 2 ? 'disabled style="opacity:0.3;"' : ''} title="Remove this option" style="color:var(--error);"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+        `).join('')}
+        <button class="btn btn-ghost btn-sm" onclick="addMqOption(${idx})" style="margin-top:4px;"><i class="fa-solid fa-plus"></i> Add option</button>
+      </div>
+    </div></div>
+  `;
+}
+
+// === State mutation handlers ===
+function updateMqField(idx, field, value) {
+  const s = window._mqEditState; if (!s) return;
+  if (!s.questions[idx]) return;
+  s.questions[idx][field] = value;
+}
+function updateMqOption(qIdx, optIdx, value) {
+  const s = window._mqEditState; if (!s || !s.questions[qIdx]) return;
+  s.questions[qIdx].opts[optIdx] = value;
+}
+function updateMqCorrect(qIdx, optIdx) {
+  const s = window._mqEditState; if (!s || !s.questions[qIdx]) return;
+  s.questions[qIdx].correct = optIdx;
+}
+function addMqOption(qIdx) {
+  const s = window._mqEditState; if (!s || !s.questions[qIdx]) return;
+  s.questions[qIdx].opts.push('');
+  renderModuleQuizEditorBody();
+}
+function deleteMqOption(qIdx, optIdx) {
+  const s = window._mqEditState; if (!s || !s.questions[qIdx]) return;
+  if (s.questions[qIdx].opts.length <= 2) return;
+  s.questions[qIdx].opts.splice(optIdx, 1);
+  // Adjust correct index if needed
+  if (s.questions[qIdx].correct === optIdx) s.questions[qIdx].correct = 0;
+  else if (s.questions[qIdx].correct > optIdx) s.questions[qIdx].correct -= 1;
+  renderModuleQuizEditorBody();
+}
+function addModuleQuizQuestion() {
+  const s = window._mqEditState; if (!s) return;
+  s.questions.push({ q: '', opts: ['', '', '', ''], correct: 0 });
+  renderModuleQuizEditorBody();
+}
+function deleteModuleQuizQuestion(idx) {
+  if (!confirm('Delete this question? This cannot be undone until you reload without saving.')) return;
+  const s = window._mqEditState; if (!s) return;
+  s.questions.splice(idx, 1);
+  renderModuleQuizEditorBody();
+}
+function moveModuleQuizQuestion(idx, dir) {
+  const s = window._mqEditState; if (!s) return;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= s.questions.length) return;
+  const [item] = s.questions.splice(idx, 1);
+  s.questions.splice(newIdx, 0, item);
+  renderModuleQuizEditorBody();
+}
+
+async function saveModuleQuizOverride() {
+  const s = window._mqEditState; if (!s) return;
+  const statusEl = document.getElementById('mq-save-status');
+  // Client-side validation
+  for (let i = 0; i < s.questions.length; i++) {
+    const q = s.questions[i];
+    if (!q.q || !q.q.trim()) {
+      statusEl.innerHTML = `<span style="color:var(--error);">Question ${i + 1} is missing text.</span>`;
+      return;
+    }
+    if (!Array.isArray(q.opts) || q.opts.length < 2) {
+      statusEl.innerHTML = `<span style="color:var(--error);">Question ${i + 1} needs at least 2 answer choices.</span>`;
+      return;
+    }
+    if (q.opts.some(o => !o || !String(o).trim())) {
+      statusEl.innerHTML = `<span style="color:var(--error);">Question ${i + 1} has a blank answer choice.</span>`;
+      return;
+    }
+    if (typeof q.correct !== 'number' || q.correct < 0 || q.correct >= q.opts.length) {
+      statusEl.innerHTML = `<span style="color:var(--error);">Question ${i + 1} needs a correct answer selected.</span>`;
+      return;
+    }
+  }
+  if (!API_BASE) {
+    statusEl.innerHTML = '<span style="color:var(--error);">Backend not connected. Cannot save.</span>';
+    return;
+  }
+  statusEl.innerHTML = '<span class="text-muted">Saving…</span>';
+  try {
+    const res = await apiCall(`/api/admin/module-quiz/${encodeURIComponent(s.moduleId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ questions: s.questions })
+    });
+    if (res && res.ok) {
+      // Apply override immediately to COURSE_MODULES so the change is live
+      const mod = COURSE_MODULES.find(m => String(m.id) === String(s.moduleId));
+      if (mod) mod.quiz = JSON.parse(JSON.stringify(s.questions));
+      s.isOverride = true;
+      statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Saved. Students will see the updated quiz on their next attempt.</span>';
+      renderModuleQuizEditorBody();
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--error);">Save failed: ${escapeHtml((res && res.error) || 'unknown error')}</span>`;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--error);">Save failed: ${escapeHtml(e.message || 'network error')}</span>`;
+  }
+}
+
+async function resetModuleQuizToDefault(moduleId) {
+  if (!confirm('Revert this quiz back to the original hardcoded questions? Any custom edits will be lost.')) return;
+  if (!API_BASE) { alert('Backend not connected.'); return; }
+  try {
+    await apiCall(`/api/admin/module-quiz/${encodeURIComponent(moduleId)}`, { method: 'DELETE' });
+    // Reload the editor with defaults
+    await loadModuleQuizForEdit(moduleId);
+  } catch (e) {
+    alert('Reset failed: ' + (e.message || 'unknown error'));
+  }
+}
+
+// =============================================================================
+// ===== APPLY MODULE-QUIZ OVERRIDES ON APP LOAD ===============================
+// =============================================================================
+// Fetch all saved overrides once the user is logged in, then merge into the
+// in-memory COURSE_MODULES array. This way students see the latest edited
+// quiz without needing a code deploy.
+// =============================================================================
+async function applyModuleQuizOverrides() {
+  if (!API_BASE) return;
+  if (typeof COURSE_MODULES === 'undefined') return;
+  try {
+    const res = await apiCall('/api/module-quiz-overrides');
+    if (!res || !res.overrides) return;
+    Object.entries(res.overrides).forEach(([modId, questions]) => {
+      const mod = COURSE_MODULES.find(m => String(m.id) === String(modId));
+      if (mod && Array.isArray(questions) && questions.length > 0) {
+        mod.quiz = questions;
+      }
+    });
+  } catch (e) {
+    console.warn('Could not load module quiz overrides', e);
+  }
+}
+
+// Hook into the login flow — wrap the existing `render()` call after auth
+(function hookOverrideLoader() {
+  // Run once on script load if the user is already authed (page refresh)
+  setTimeout(() => {
+    if (APP && APP.currentUser && API_BASE) {
+      applyModuleQuizOverrides().then(() => {
+        // Trigger a re-render only if we're on the quiz/module view
+        if (APP.currentView === 'module' || APP.currentView === 'dashboard') {
+          if (typeof render === 'function') render();
+        }
+      });
+    }
+  }, 500);
+  // Also re-apply after any successful login. We patch handleLogin if present.
+  if (typeof handleLogin === 'function') {
+    const _orig = handleLogin;
+    window.handleLogin = async function(...args) {
+      const r = await _orig.apply(this, args);
+      try { await applyModuleQuizOverrides(); } catch (e) {}
+      return r;
+    };
+    handleLogin = window.handleLogin;
+  }
 })();

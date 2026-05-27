@@ -185,6 +185,18 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_question_replies_question ON question_replies(question_id, created_at);
 
+      -- ===== MODULE QUIZ OVERRIDES =====
+      -- Module quizzes are defined in content.js (frontend). This table lets admin
+      -- override the questions/answers for a given module without touching code.
+      -- If a row exists for a module_id, the frontend uses those questions; otherwise
+      -- it falls back to the hardcoded default.
+      CREATE TABLE IF NOT EXISTS module_quiz_overrides (
+        module_id TEXT PRIMARY KEY,
+        questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+
       -- ===== DISCUSSION FORUM =====
       CREATE TABLE IF NOT EXISTS forum_posts (
         id SERIAL PRIMARY KEY,
