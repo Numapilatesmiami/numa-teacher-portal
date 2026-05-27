@@ -1359,30 +1359,34 @@ button, input, select, textarea {
    =========================================================================== */
 @media (min-width: 769px) {
   .dashboard-layout {
-    flex-direction: column;
-    min-height: calc(100vh - 64px);
+    display: block !important;
+    flex-direction: unset !important;
+    min-height: 0 !important;
+    height: auto !important;
   }
 
   /* Convert sidebar into a slim, centered top nav */
   .sidebar {
-    width: 100%;
-    height: auto;
-    min-height: auto;
-    position: sticky;
-    top: 64px;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    position: sticky !important;
+    top: 64px !important;
     z-index: 50;
-    padding: 12px 32px;
-    border-right: none;
-    border-bottom: 1px solid var(--cream-darker);
-    background: rgba(255, 255, 255, 0.85);
+    padding: 10px 32px !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--cream-darker) !important;
+    background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: saturate(180%) blur(20px);
     -webkit-backdrop-filter: saturate(180%) blur(20px);
-    overflow: visible;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    flex-wrap: wrap;
+    overflow: visible !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    flex-wrap: wrap !important;
+    flex: 0 0 auto !important;
   }
 
   /* The Main section sits inline; Modules section is HIDDEN from the nav */
@@ -1440,10 +1444,13 @@ button, input, select, textarea {
 
   /* Main content fills the full width with generous breathing room */
   .main-content {
-    max-width: 1240px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 40px 32px;
+    display: block !important;
+    max-width: 1240px !important;
+    width: auto !important;
+    margin: 0 auto !important;
+    padding: 32px 32px 64px !important;
+    flex: unset !important;
+    overflow-x: visible !important;
   }
 }
 
