@@ -1352,8 +1352,10 @@ button, input, select, textarea {
 .rich-editor .video-wrap { max-width: 100%; }
 
 /* ===========================================================================
-   HORIZONTAL TOP-NAV OVERRIDE (May 2026)
-   Converts the side sidebar into a horizontal pill nav across the top.
+   APPLE-CLEAN TOP NAV (May 2026)
+   Only the high-level links sit in the top bar. The "Modules" group is
+   hidden from the nav entirely — modules are accessed from the Dashboard
+   cards. Lots of breathing room, no labels, no clutter.
    =========================================================================== */
 @media (min-width: 769px) {
   .dashboard-layout {
@@ -1361,7 +1363,7 @@ button, input, select, textarea {
     min-height: calc(100vh - 64px);
   }
 
-  /* The sidebar becomes a horizontal nav bar */
+  /* Convert sidebar into a slim, centered top nav */
   .sidebar {
     width: 100%;
     height: auto;
@@ -1369,77 +1371,79 @@ button, input, select, textarea {
     position: sticky;
     top: 64px;
     z-index: 50;
-    padding: 10px 24px;
+    padding: 12px 32px;
     border-right: none;
     border-bottom: 1px solid var(--cream-darker);
-    overflow-x: auto;
-    overflow-y: hidden;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    overflow: visible;
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: nowrap;
-    white-space: nowrap;
+    justify-content: center;
+    gap: 4px;
+    flex-wrap: wrap;
   }
 
-  /* Each "section" group (Main, Modules, etc.) sits inline */
+  /* The Main section sits inline; Modules section is HIDDEN from the nav */
   .sidebar-section {
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-bottom: 0;
+    gap: 2px;
+    margin: 0;
     padding: 0;
-    flex-shrink: 0;
   }
 
-  /* Add a thin divider between groups */
-  .sidebar-section + .sidebar-section {
-    border-left: 1px solid var(--cream-darker);
-    padding-left: 10px;
-    margin-left: 6px;
-  }
-
-  /* Section labels become small inline chips */
+  /* Hide the section labels (MAIN, MODULES) entirely — Apple-clean */
   .sidebar-label {
-    padding: 0 8px 0 0;
-    margin-bottom: 0;
-    font-size: 10px;
-    color: var(--charcoal-muted);
-    border-right: 0;
-    flex-shrink: 0;
+    display: none;
   }
 
-  /* Each link becomes a compact horizontal pill */
+  /* Hide the entire Modules section from the top nav.
+     Students get to modules from the Dashboard's module cards. */
+  .sidebar-section:nth-of-type(2) {
+    display: none;
+  }
+
+  /* Compact, subtle text links — no pills, no icons, lots of space */
   .sidebar-item {
-    padding: 8px 12px;
-    margin-bottom: 0;
+    padding: 8px 14px;
+    margin: 0;
     font-size: 13px;
-    border-radius: 999px;
+    font-weight: 500;
+    color: var(--charcoal-light);
+    border-radius: 6px;
+    transition: color 0.15s ease, background 0.15s ease;
     white-space: nowrap;
-    flex-shrink: 0;
   }
 
+  .sidebar-item:hover {
+    background: transparent;
+    color: var(--charcoal);
+  }
+
+  .sidebar-item.active {
+    background: transparent;
+    color: var(--terracotta);
+    font-weight: 600;
+  }
+
+  /* Hide the icons in the top nav for a cleaner look — text-only */
   .sidebar-item i {
-    width: auto;
-    font-size: 13px;
+    display: none;
   }
 
-  /* Hide the per-section status dot in horizontal layout (clutter) */
+  /* Hide the per-section status dot */
   .sidebar-item .status-dot {
     display: none;
   }
 
-  /* Main content can now use the full width */
+  /* Main content fills the full width with generous breathing room */
   .main-content {
-    max-width: 100%;
+    max-width: 1100px;
     width: 100%;
-    padding: 32px 40px;
-  }
-
-  /* Hide the scrollbar but keep scrolling */
-  .sidebar::-webkit-scrollbar { height: 6px; }
-  .sidebar::-webkit-scrollbar-thumb {
-    background: var(--cream-darker);
-    border-radius: 3px;
+    margin: 0 auto;
+    padding: 48px 40px;
   }
 }
 
