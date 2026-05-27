@@ -1350,3 +1350,97 @@ button, input, select, textarea {
 .rich-editor ul, .rich-editor ol { margin: 0 0 12px 24px; }
 .rich-editor blockquote { border-left: 3px solid var(--terracotta); padding-left: 16px; color: var(--charcoal-light); margin: 12px 0; font-style: italic; }
 .rich-editor .video-wrap { max-width: 100%; }
+
+/* ===========================================================================
+   HORIZONTAL TOP-NAV OVERRIDE (May 2026)
+   Converts the side sidebar into a horizontal pill nav across the top.
+   =========================================================================== */
+@media (min-width: 769px) {
+  .dashboard-layout {
+    flex-direction: column;
+    min-height: calc(100vh - 64px);
+  }
+
+  /* The sidebar becomes a horizontal nav bar */
+  .sidebar {
+    width: 100%;
+    height: auto;
+    min-height: auto;
+    position: sticky;
+    top: 64px;
+    z-index: 50;
+    padding: 10px 24px;
+    border-right: none;
+    border-bottom: 1px solid var(--cream-darker);
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  /* Each "section" group (Main, Modules, etc.) sits inline */
+  .sidebar-section {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 0;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  /* Add a thin divider between groups */
+  .sidebar-section + .sidebar-section {
+    border-left: 1px solid var(--cream-darker);
+    padding-left: 10px;
+    margin-left: 6px;
+  }
+
+  /* Section labels become small inline chips */
+  .sidebar-label {
+    padding: 0 8px 0 0;
+    margin-bottom: 0;
+    font-size: 10px;
+    color: var(--charcoal-muted);
+    border-right: 0;
+    flex-shrink: 0;
+  }
+
+  /* Each link becomes a compact horizontal pill */
+  .sidebar-item {
+    padding: 8px 12px;
+    margin-bottom: 0;
+    font-size: 13px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .sidebar-item i {
+    width: auto;
+    font-size: 13px;
+  }
+
+  /* Hide the per-section status dot in horizontal layout (clutter) */
+  .sidebar-item .status-dot {
+    display: none;
+  }
+
+  /* Main content can now use the full width */
+  .main-content {
+    max-width: 100%;
+    width: 100%;
+    padding: 32px 40px;
+  }
+
+  /* Hide the scrollbar but keep scrolling */
+  .sidebar::-webkit-scrollbar { height: 6px; }
+  .sidebar::-webkit-scrollbar-thumb {
+    background: var(--cream-darker);
+    border-radius: 3px;
+  }
+}
+
+/* On small screens keep the mobile drawer behavior already defined */
