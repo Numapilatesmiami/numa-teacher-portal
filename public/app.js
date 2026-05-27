@@ -1220,7 +1220,7 @@ function renderAdminShell() {
       <button class="btn btn-ghost btn-sm" onclick="handleLogout()"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</button>
     </div>
   </div>
-  <div style="max-width:1100px;margin:0 auto;padding:32px 24px;">
+  <div class="admin-content-wrap">
     ${renderAdminContent()}
   </div>`;
 }
@@ -1236,15 +1236,49 @@ function renderAdminContent() {
 
   let html = `
   <div class="page-header fade-in">
-    <h1>Student Management</h1>
-    <p>${users.length} registered student${users.length !== 1 ? 's' : ''}</p>
+    <h1>Welcome back</h1>
+    <p>${users.length} registered student${users.length !== 1 ? 's' : ''} · Manage the NUMA Certification Portal</p>
   </div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
-    <button class="btn btn-primary" onclick="navigate('admin',{view:'modules'})"><i class="fa-solid fa-book-open"></i> Edit Course Content</button>
-    <button class="btn btn-secondary" onclick="navigate('admin',{view:'gradebook'})"><i class="fa-solid fa-table"></i> Gradebook</button>
-    <button class="btn btn-secondary" onclick="navigate('admin',{view:'codes'})"><i class="fa-solid fa-key"></i> Enrollment Codes</button>
-    <button class="btn btn-secondary" onclick="navigate('admin',{view:'plagiarism'})"><i class="fa-solid fa-flag"></i> Plagiarism Check</button>
-  </div>`;
+
+  <div class="admin-overview-grid">
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'modules'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-book-open"></i></div>
+      <h3>Course Content</h3>
+      <p>Edit modules, sections, and quizzes</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'gradebook'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-table"></i></div>
+      <h3>Gradebook</h3>
+      <p>Review quiz scores and student progress</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'codes'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-key"></i></div>
+      <h3>Enrollment Codes</h3>
+      <p>Create codes for new students to sign up</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'questions'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-inbox"></i></div>
+      <h3>Student Questions</h3>
+      <p>Reply to questions submitted by students</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'attempts'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-stopwatch"></i></div>
+      <h3>Quiz Attempts</h3>
+      <p>See every section-quiz attempt with timing</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'forum'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-comments"></i></div>
+      <h3>Discussion Forum</h3>
+      <p>Moderate posts · pin announcements</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'plagiarism'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-flag"></i></div>
+      <h3>Plagiarism Check</h3>
+      <p>Compare student work for similarities</p>
+    </div>
+  </div>
+
+  <h2 class="admin-section-heading">Students</h2>`;
 
   if (users.length === 0) {
     html += '<div class="card"><div class="card-body text-center text-muted">No students registered yet.</div></div>';

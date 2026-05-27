@@ -1479,3 +1479,74 @@ button, input, select, textarea {
 }
 
 /* On small screens keep the mobile drawer behavior already defined */
+
+/* ===========================================================================
+   ADMIN PAGE — Apple-clean layout
+   =========================================================================== */
+.admin-content-wrap {
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 48px 32px 64px;
+}
+
+.admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 40px;
+}
+
+.admin-overview-card {
+  background: var(--white);
+  border: 1px solid var(--cream-darker);
+  border-radius: 14px;
+  padding: 24px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-overview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(80, 60, 40, 0.08);
+  border-color: var(--terracotta);
+}
+
+.admin-overview-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--cream);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--terracotta);
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.admin-overview-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--charcoal);
+}
+
+.admin-overview-card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--charcoal-muted);
+  line-height: 1.45;
+}
+
+.admin-section-heading {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--charcoal);
+  margin: 0 0 16px;
+}
