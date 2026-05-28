@@ -4407,3 +4407,128 @@ function resetHourRequirementsToDefault() {
   document.getElementById('ps-total').value = 450;
   saveProgramSettings();
 }
+
+// =============================================================================
+// ===== MERGE MODULE/SECTION OVERRIDES FROM BACKEND ===========================
+// =============================================================================
+// renderModulePage() reads from the hardcoded COURSE_MODULES constant in
+// content.js. The admin module editor writes to the database. Without this
+// merger, admin edits never reach students.
+//
+// On app load (and after login), fetch the live module data from /api/modules
+// and overwrite the matching section content/title in COURSE_MODULES so the
+// student view shows the latest version. Sections that exist ONLY in the DB
+// (newly added) are also injected. Sections deleted from the DB stay hidden.
+// =============================================================================
+
+let _moduleContentLoaded = false;
+
+async function applyModuleContentOverrides() {
+  if (!API_BASE) return;
+  if (typeof COURSE_MODULES === 'undefined') return;
+  try {
+    const list = await apiCall('/api/modules');
+    if (!Array.isArray(list)) return;
+
+    for (const m of list) {
+      // Fetch full module with sections
+      const detail = await apiCall(`/api/modules/${encodeURIComponent(m.id)}`);
+      if (!detail || !Array.isArray(detail.sections)) continue;
+
+      // Find the matching module in the hardcoded list (try both string + number id)
+      const courseMod = COURSE_MODULES.find(cm =>
+        String(cm.id) === String(m.id) || cm.id === Number(m.id)
+      );
+      if (!courseMod) continue;
+
+      // Optionally update top-level module metadata if present
+      if (detail.title) courseMod.title = detail.title;
+      if (detail.subtitle) courseMod.subtitle = detail.subtitle;
+      if (detail.description) courseMod.description = detail.description;
+
+      // Preserve special bundled sections that may not exist in DB:
+      // - Quiz sections (id ending in -quiz with isQuiz: true) keep their structure
+      // - Sections with custom render flags
+      const dbSectionsById = {};
+      detail.sections.forEach(s => { dbSectionsById[String(s.id)] = s; });
+
+      // 1) Update existing hardcoded sections that match DB rows
+      courseMod.sections = (courseMod.sections || []).map(cs => {
+        const dbS = dbSectionsById[String(cs.id)];
+        if (!dbS) return cs;            // not in DB; keep as-is (e.g. quizzes)
+        // Merge: keep cs's special flags (isQuiz, etc.), override title + content
+        return {
+          ...cs,
+          title: dbS.title || cs.title,
+          content: dbS.content != null ? dbS.content : cs.content
+        };
+      });
+
+      // 2) Add brand-new sections (in DB but not in the hardcoded array).
+      //    Insert them in DB sort order, before any quiz section if present.
+      const existingIds = new Set(courseMod.sections.map(s => String(s.id)));
+      const newOnes = detail.sections
+        .filter(s => !existingIds.has(String(s.id)))
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+        .map(s => ({ id: s.id, title: s.title, content: s.content || '' }));
+
+      if (newOnes.length) {
+        // Insert before the first quiz section (so the quiz stays last)
+        const quizIdx = courseMod.sections.findIndex(s => s.isQuiz);
+        if (quizIdx === -1) {
+          courseMod.sections = [...courseMod.sections, ...newOnes];
+        } else {
+          courseMod.sections = [
+            ...courseMod.sections.slice(0, quizIdx),
+            ...newOnes,
+            ...courseMod.sections.slice(quizIdx)
+          ];
+        }
+      }
+    }
+
+    _moduleContentLoaded = true;
+    console.log('[numa] applied module content overrides from backend');
+
+    // If user is currently viewing a module, re-render so they see fresh content
+    try {
+      if (APP && APP.currentView === 'module' && typeof render === 'function') render();
+    } catch (e) {}
+  } catch (e) {
+    console.warn('Could not apply module content overrides', e);
+  }
+}
+
+// Kick off on script load if already authed, and after login
+(function hookModuleContentLoader() {
+  setTimeout(() => {
+    if (APP && APP.currentUser && API_BASE) {
+      applyModuleContentOverrides();
+    }
+  }, 700);
+  if (typeof handleLogin === 'function') {
+    const _orig = handleLogin;
+    window.handleLogin = async function(...args) {
+      const r = await _orig.apply(this, args);
+      try { await applyModuleContentOverrides(); } catch (e) {}
+      return r;
+    };
+    handleLogin = window.handleLogin;
+  }
+})();
+
+// Also re-apply when the admin saves a section so the change is visible
+// immediately without a page reload. We monkey-patch saveSection if present.
+(function hookSaveSection() {
+  if (typeof saveSection !== 'function') return;
+  const _orig = saveSection;
+  window.saveSection = async function(...args) {
+    const r = await _orig.apply(this, args);
+    try {
+      _moduleContentLoaded = false;
+      await applyModuleContentOverrides();
+    } catch (e) {}
+    return r;
+  };
+  saveSection = window.saveSection;
+})();
