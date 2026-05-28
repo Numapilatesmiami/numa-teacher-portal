@@ -2451,16 +2451,33 @@ async function saveSectionOrder(moduleId, sectionIds) {
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--warning);">Reordering needs the backend connected.</span>';
     return;
   }
+  if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--error);">No section IDs to save. Refresh and try again.</span>';
+    console.error('saveSectionOrder called with empty/invalid sectionIds', sectionIds);
+    return;
+  }
+  // Filter out any null/undefined/empty IDs (defensive)
+  const cleanIds = sectionIds.filter(id => id != null && String(id).trim() !== '');
+  if (cleanIds.length !== sectionIds.length) {
+    console.warn('Some section IDs were empty:', sectionIds);
+  }
+  console.log('[reorder] PUT /api/admin/modules/' + moduleId + '/reorder-sections', cleanIds);
   const result = await apiCall(`/api/admin/modules/${moduleId}/reorder-sections`, {
     method: 'PUT',
-    body: JSON.stringify({ section_ids: sectionIds })
+    body: JSON.stringify({ section_ids: cleanIds })
   });
+  console.log('[reorder] response:', result);
   if (result && result.ok) {
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Order saved.</span>';
     _adminModulesCache = null;
     setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
   } else {
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--error);">Save failed. Try again.</span>';
+    // Surface the actual error message from the backend (since apiCall now
+    // returns {error, _httpStatus} on 4xx/5xx instead of null)
+    const msg = (result && result.error) ? result.error : (result === null ? 'Network error — backend unreachable' : 'Unknown response');
+    const status = (result && result._httpStatus) ? ' (HTTP ' + result._httpStatus + ')' : '';
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--error);">Save failed: ${escapeHtml(msg)}${status}. Check the console for details.</span>`;
+    console.error('[reorder] failed', { result, sectionIds: cleanIds, moduleId });
   }
 }
 
