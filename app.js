@@ -31,11 +31,16 @@ async function apiCall(path, options = {}) {
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      // Backend returned an error response (4xx/5xx) — surface the error
+      // message so callers can show it to the user. Do NOT return null — null
+      // means "network unreachable" and triggers fallback paths that should
+      // only run when the server is genuinely offline.
+      const errBody = await res.json().catch(() => ({ error: res.statusText || `HTTP ${res.status}` }));
+      return { error: errBody.error || `HTTP ${res.status}`, _httpStatus: res.status };
     }
     return await res.json();
   } catch (err) {
+    // Genuine network failure (CORS, DNS, offline, etc.)
     console.warn('[api]', path, err.message);
     return null;
   }
@@ -310,21 +315,30 @@ async function handleRegister() {
     return;
   }
 
-  // Try backend first if configured
-  if (API_BASE) {
-    const result = await apiCall('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ username: user, password: pass, fullName: name, email, enrollmentCode: code })
-    });
-    if (result?.token) {
-      setAuthToken(result.token);
-    } else if (result === null) {
-      // Backend unreachable — continue with local registration
-    } else {
-      errEl.textContent = result?.error || 'Registration failed.';
-      errEl.style.display = 'block';
-      return;
-    }
+  // Backend registration is REQUIRED — we no longer silently fall back to
+  // localStorage-only registration, because that creates ghost accounts that
+  // vanish when the browser cache is cleared or when the user logs in from
+  // another device.
+  if (!API_BASE) {
+    errEl.textContent = 'Registration is temporarily unavailable (no backend configured). Please contact support.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const result = await apiCall('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username: user, password: pass, fullName: name, email, enrollmentCode: code })
+  });
+  if (result?.token) {
+    setAuthToken(result.token);
+  } else if (result === null) {
+    // Backend unreachable — STOP. Do not create a phantom local account.
+    errEl.innerHTML = '<strong>Registration failed:</strong> the server is currently unreachable. Please try again in a minute. If this keeps happening, contact info@numapilatesmiami.com so we can check the database.';
+    errEl.style.display = 'block';
+    return;
+  } else {
+    errEl.textContent = result?.error || 'Registration failed.';
+    errEl.style.display = 'block';
+    return;
   }
 
   const userData = createDefaultUserData(user, name);
