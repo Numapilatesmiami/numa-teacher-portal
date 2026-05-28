@@ -526,7 +526,7 @@ function renderDashboard() {
       <div class="stat-icon charcoal"><i class="fa-solid fa-clock"></i></div>
       <div class="stat-label">Hours Logged</div>
       <div class="stat-value">${totalHours.toFixed(1)}</div>
-      <div class="stat-sub">of 450 target</div>
+      <div class="stat-sub">of ${getHourReq('total')} target</div>
     </div>
     <div class="stat-card">
       <div class="stat-icon terracotta"><i class="fa-solid fa-award"></i></div>
@@ -850,27 +850,33 @@ function renderHoursPage() {
   let html = `
   <div class="page-header fade-in">
     <h1>Hour Logging</h1>
-    <p>Track your observation, teaching practicum, and personal practice hours toward the 450-hour requirement.</p>
+    <p>Track your observation, teaching practicum, and personal practice hours toward the ${getHourReq('total')}-hour requirement.</p>
   </div>
 
   <div class="hours-summary slide-up">
     <div class="hours-card">
       <div class="hours-num">${total.toFixed(1)}</div>
       <div class="hours-label">Total Hours</div>
-      <div class="progress-bar-wrap mt-1"><div class="progress-bar-fill" style="width:${Math.min(100, (total/450)*100)}%"></div></div>
-      <div class="text-xs text-muted mt-1">${Math.min(100, ((total/450)*100)).toFixed(1)}% of 450</div>
+      <div class="progress-bar-wrap mt-1"><div class="progress-bar-fill" style="width:${getHourReq('total') > 0 ? Math.min(100, (total/getHourReq('total'))*100) : 0}%"></div></div>
+      <div class="text-xs text-muted mt-1">${getHourReq('total') > 0 ? Math.min(100, ((total/getHourReq('total'))*100)).toFixed(1) : '0.0'}% of ${getHourReq('total')}</div>
     </div>
     <div class="hours-card">
       <div class="hours-num" style="color:var(--sage)">${obs.toFixed(1)}</div>
       <div class="hours-label">Observation</div>
+      <div class="progress-bar-wrap mt-1"><div class="progress-bar-fill" style="width:${getHourReq('observation') > 0 ? Math.min(100, (obs/getHourReq('observation'))*100) : 0}%"></div></div>
+      <div class="text-xs text-muted mt-1">${obs.toFixed(1)} / ${getHourReq('observation')} hrs</div>
     </div>
     <div class="hours-card">
       <div class="hours-num" style="color:var(--sage-dark)">${teach.toFixed(1)}</div>
       <div class="hours-label">Teaching</div>
+      <div class="progress-bar-wrap mt-1"><div class="progress-bar-fill" style="width:${getHourReq('teaching') > 0 ? Math.min(100, (teach/getHourReq('teaching'))*100) : 0}%"></div></div>
+      <div class="text-xs text-muted mt-1">${teach.toFixed(1)} / ${getHourReq('teaching')} hrs</div>
     </div>
     <div class="hours-card">
       <div class="hours-num" style="color:var(--charcoal-muted)">${personal.toFixed(1)}</div>
       <div class="hours-label">Personal Practice</div>
+      <div class="progress-bar-wrap mt-1"><div class="progress-bar-fill" style="width:${getHourReq('personal') > 0 ? Math.min(100, (personal/getHourReq('personal'))*100) : 0}%"></div></div>
+      <div class="text-xs text-muted mt-1">${personal.toFixed(1)} / ${getHourReq('personal')} hrs</div>
     </div>
   </div>
 
@@ -1289,6 +1295,11 @@ function renderAdminContent() {
       <div class="admin-overview-icon"><i class="fa-solid fa-flag"></i></div>
       <h3>Plagiarism Check</h3>
       <p>Compare student work for similarities</p>
+    </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'program-settings'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-sliders"></i></div>
+      <h3>Program Settings</h3>
+      <p>Edit required hours for observation, teaching, personal practice</p>
     </div>
   </div>
 
@@ -3080,6 +3091,7 @@ async function markSectionComplete(sectionId, completed = true) {
     if (p.view === 'forum') return renderAdminForum();
     if (p.view === 'section-quiz') return renderAdminSectionQuizEditor();
     if (p.view === 'editModuleQuiz') return renderAdminModuleQuizEditor(p.moduleId);
+    if (p.view === 'program-settings') return renderProgramSettingsEditor();
     return _origAdmin();
   };
   renderAdminContent = window.renderAdminContent;
@@ -4236,3 +4248,162 @@ async function applyModuleQuizOverrides() {
     handleLogin = window.handleLogin;
   }
 })();
+
+// =============================================================================
+// ===== PROGRAM SETTINGS (HOUR REQUIREMENTS) ==================================
+// =============================================================================
+// Admin can edit the required hours for observation, teaching, personal
+// practice, and total. Values are persisted server-side in the
+// program_settings table and cached on window._programSettings for synchronous
+// access by render functions.
+// =============================================================================
+
+// Defaults — used until the server responds (and as fallback if API is down)
+window._programSettings = window._programSettings || {
+  hour_requirements: { observation: 100, teaching: 200, personal: 150, total: 450 }
+};
+
+function getHourReq(type) {
+  const r = (window._programSettings && window._programSettings.hour_requirements) || {};
+  const n = Number(r[type]);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function loadProgramSettings() {
+  if (!API_BASE) return;
+  try {
+    const res = await apiCall('/api/program-settings');
+    if (res && res.settings) {
+      window._programSettings = res.settings;
+      // Make sure hour_requirements always exists
+      if (!window._programSettings.hour_requirements) {
+        window._programSettings.hour_requirements = { observation: 100, teaching: 200, personal: 150, total: 450 };
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load program settings', e);
+  }
+}
+
+// Kick off load on script start, and again after successful login
+(function hookProgramSettingsLoader() {
+  setTimeout(() => {
+    if (APP && APP.currentUser && API_BASE) {
+      loadProgramSettings();
+    }
+  }, 600);
+  if (typeof handleLogin === 'function') {
+    const _orig = handleLogin;
+    window.handleLogin = async function(...args) {
+      const r = await _orig.apply(this, args);
+      try { await loadProgramSettings(); } catch (e) {}
+      return r;
+    };
+    handleLogin = window.handleLogin;
+  }
+})();
+
+// === Admin editor UI ===
+function renderProgramSettingsEditor() {
+  // Kick off load to make sure we have fresh values
+  setTimeout(() => {
+    loadProgramSettings().then(() => populateProgramSettingsForm());
+  }, 50);
+  return `
+    <div class="breadcrumb fade-in">
+      <a href="#" onclick="navigate('admin',{view:'dashboard'});return false;">Admin</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <span>Program Settings</span>
+    </div>
+    <div class="page-header fade-in" style="margin-top:8px;">
+      <h1><i class="fa-solid fa-sliders"></i> Program Settings</h1>
+      <p>Edit the hour requirements students must complete for certification.</p>
+    </div>
+    <div class="card slide-up"><div class="card-body">
+      <h3 style="margin-top:0;">Hour Requirements</h3>
+      <p class="text-muted" style="margin-bottom:20px;">These targets show up on every student's Hour Logging page and on the dashboard. NPCP-aligned defaults are 100 / 200 / 150 / 450, but you can set them to whatever your program requires.</p>
+      <div id="ps-form-body"><p class="text-muted">Loading current values…</p></div>
+    </div></div>
+  `;
+}
+
+function populateProgramSettingsForm() {
+  const body = document.getElementById('ps-form-body');
+  if (!body) return;
+  const r = (window._programSettings && window._programSettings.hour_requirements) || {};
+  const obs = r.observation ?? 100;
+  const teach = r.teaching ?? 200;
+  const personal = r.personal ?? 150;
+  const total = r.total ?? 450;
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:640px;">
+      <div class="form-group">
+        <label for="ps-obs">Observation hours</label>
+        <input type="number" min="0" step="1" id="ps-obs" class="form-control" value="${obs}">
+        <small class="text-muted">Hours watching certified instructors teach</small>
+      </div>
+      <div class="form-group">
+        <label for="ps-teach">Teaching practicum hours</label>
+        <input type="number" min="0" step="1" id="ps-teach" class="form-control" value="${teach}">
+        <small class="text-muted">Hours student spends teaching real classes</small>
+      </div>
+      <div class="form-group">
+        <label for="ps-personal">Personal practice hours</label>
+        <input type="number" min="0" step="1" id="ps-personal" class="form-control" value="${personal}">
+        <small class="text-muted">Hours of student's own Pilates practice</small>
+      </div>
+      <div class="form-group">
+        <label for="ps-total">Total hours required</label>
+        <input type="number" min="0" step="1" id="ps-total" class="form-control" value="${total}">
+        <small class="text-muted">Grand total shown on the dashboard</small>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="saveProgramSettings()"><i class="fa-solid fa-floppy-disk"></i> Save changes</button>
+      <button class="btn btn-secondary" onclick="resetHourRequirementsToDefault()"><i class="fa-solid fa-rotate-left"></i> Reset to NPCP defaults (100 / 200 / 150 / 450)</button>
+      <span id="ps-save-status" class="text-muted"></span>
+    </div>
+  `;
+}
+
+async function saveProgramSettings() {
+  const statusEl = document.getElementById('ps-save-status');
+  const obs = Number(document.getElementById('ps-obs').value);
+  const teach = Number(document.getElementById('ps-teach').value);
+  const personal = Number(document.getElementById('ps-personal').value);
+  const total = Number(document.getElementById('ps-total').value);
+  for (const [name, val] of [['observation', obs], ['teaching', teach], ['personal', personal], ['total', total]]) {
+    if (!Number.isFinite(val) || val < 0) {
+      statusEl.innerHTML = `<span style="color:var(--error);">${name} must be a non-negative number</span>`;
+      return;
+    }
+  }
+  if (!API_BASE) {
+    statusEl.innerHTML = '<span style="color:var(--error);">Backend not connected.</span>';
+    return;
+  }
+  statusEl.innerHTML = '<span class="text-muted">Saving…</span>';
+  try {
+    const res = await apiCall('/api/admin/program-settings/hour_requirements', {
+      method: 'PUT',
+      body: JSON.stringify({ value: { observation: obs, teaching: teach, personal: personal, total: total } })
+    });
+    if (res && res.ok) {
+      window._programSettings.hour_requirements = res.setting.value;
+      statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Saved. Students will see the new requirements immediately.</span>';
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--error);">Save failed: ${escapeHtml((res && res.error) || 'unknown error')}</span>`;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--error);">Save failed: ${escapeHtml(e.message || 'network error')}</span>`;
+  }
+}
+
+function resetHourRequirementsToDefault() {
+  if (!confirm('Reset hour requirements to NPCP defaults (100 / 200 / 150 / 450)?')) return;
+  document.getElementById('ps-obs').value = 100;
+  document.getElementById('ps-teach').value = 200;
+  document.getElementById('ps-personal').value = 150;
+  document.getElementById('ps-total').value = 450;
+  saveProgramSettings();
+}

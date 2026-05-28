@@ -950,6 +950,61 @@ app.put('/api/admin/forum/posts/:id', adminRequired, async (req, res) => {
   res.json(result.rows[0]);
 });
 
+// ===== PROGRAM SETTINGS (admin can edit hour requirements, etc.) =====
+// Public read (any logged-in user) so students can see their requirements
+app.get('/api/program-settings', authRequired, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT key, value FROM program_settings');
+    const settings = {};
+    r.rows.forEach(row => { settings[row.key] = row.value; });
+    // Always include a sane default for hour_requirements
+    if (!settings.hour_requirements) {
+      settings.hour_requirements = { observation: 100, teaching: 200, personal: 150, total: 450 };
+    }
+    res.json({ settings });
+  } catch (e) {
+    console.error('GET program-settings error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin write — update one setting
+app.put('/api/admin/program-settings/:key', adminRequired, async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body;
+    if (value === undefined) return res.status(400).json({ error: 'value is required' });
+
+    // Validation for hour_requirements specifically
+    if (key === 'hour_requirements') {
+      if (!value || typeof value !== 'object') {
+        return res.status(400).json({ error: 'hour_requirements must be an object' });
+      }
+      const required = ['observation', 'teaching', 'personal', 'total'];
+      for (const f of required) {
+        const n = Number(value[f]);
+        if (!Number.isFinite(n) || n < 0) {
+          return res.status(400).json({ error: `${f} must be a non-negative number` });
+        }
+        value[f] = n;
+      }
+    }
+
+    const r = await pool.query(
+      `INSERT INTO program_settings (key, value, updated_at, updated_by)
+       VALUES ($1, $2::jsonb, NOW(), $3)
+       ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+       RETURNING key, value, updated_at`,
+      [key, JSON.stringify(value), req.user.id]
+    );
+    res.json({ ok: true, setting: r.rows[0] });
+  } catch (e) {
+    console.error('PUT program-settings error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ===== MODULE QUIZ OVERRIDES (admin can edit module-end quiz questions) =====
 // GET: returns saved override (or null if none — frontend uses hardcoded default)
 app.get('/api/admin/module-quiz/:moduleId', adminRequired, async (req, res) => {

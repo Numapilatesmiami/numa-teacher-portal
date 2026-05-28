@@ -185,6 +185,21 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_question_replies_question ON question_replies(question_id, created_at);
 
+      -- ===== PROGRAM SETTINGS (admin-editable global config) =====
+      -- Generic key-value JSON store for things like hour requirements, passing
+      -- thresholds, and other program-wide settings the admin can tweak.
+      CREATE TABLE IF NOT EXISTS program_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      -- Seed default hour requirements (NPCP-aligned) if no row exists yet.
+      INSERT INTO program_settings (key, value)
+      VALUES ('hour_requirements', '{"observation":100,"teaching":200,"personal":150,"total":450}'::jsonb)
+      ON CONFLICT (key) DO NOTHING;
+
       -- ===== MODULE QUIZ OVERRIDES =====
       -- Module quizzes are defined in content.js (frontend). This table lets admin
       -- override the questions/answers for a given module without touching code.
