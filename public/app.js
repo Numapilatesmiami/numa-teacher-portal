@@ -36,6 +36,20 @@ async function apiCall(path, options = {}) {
       // means "network unreachable" and triggers fallback paths that should
       // only run when the server is genuinely offline.
       const errBody = await res.json().catch(() => ({ error: res.statusText || `HTTP ${res.status}` }));
+      // 401 "No token" or "Invalid token" means our session is dead. Wipe the
+      // ghost session and bounce back to login — but only for endpoints that
+      // actually need auth (skip /api/auth/* and /api/health).
+      if (res.status === 401 && !path.startsWith('/api/auth/') && !path.includes('/api/health')) {
+        const isGhostSession = !!(APP && APP.currentUser);
+        if (isGhostSession) {
+          console.warn('[api] 401 with active session — wiping ghost session');
+          try { saveSession(null); } catch (e) {}
+          try { setAuthToken(''); } catch (e) {}
+          try { APP.currentUser = null; } catch (e) {}
+          try { alert('Your session has expired or was never properly saved. Please log in again.'); } catch (e) {}
+          try { navigate('login'); } catch (e) {}
+        }
+      }
       return { error: errBody.error || `HTTP ${res.status}`, _httpStatus: res.status };
     }
     return await res.json();
@@ -119,6 +133,16 @@ function init() {
   const session = getSession();
   if (session) {
     if (session.isAdmin) {
+      // Detect ghost admin sessions (set in localStorage but no backend token).
+      // These cause every admin API call to fail with 401 "No token".
+      const hasToken = !!getAuthToken();
+      if (API_BASE && !hasToken) {
+        console.warn('[init] Admin session has no token — forcing re-login');
+        saveSession(null);
+        setAuthToken('');
+        navigate('login');
+        return;
+      }
       APP.currentUser = { username: 'admin', isAdmin: true };
       navigate('admin');
     } else {
@@ -252,29 +276,14 @@ async function handleLogin() {
     // If backend rejected, fall through to local check (lets you log in even if backend is down)
   }
 
-  // Admin login (local fallback)
-  if (user === 'admin' && pass === 'numa2026') {
-    APP.currentUser = { username: 'admin', isAdmin: true };
-    saveSession({ username: 'admin', isAdmin: true });
-    navigate('admin');
-    return;
-  }
-
-  const userData = getUserData(user);
-  if (!userData) {
-    errEl.textContent = 'Account not found. Please register first.';
-    errEl.style.display = 'block';
-    return;
-  }
-  if (userData.password !== pass) {
-    errEl.textContent = 'Incorrect password.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  APP.currentUser = userData;
-  saveSession({ username: user });
-  navigate('dashboard');
+  // No backend-success above means: backend rejected the credentials OR was
+  // unreachable. Do NOT silently log the user in via localStorage — that
+  // creates token-less "ghost admin" sessions that hit 401 on every API call.
+  errEl.innerHTML = '<strong>Login failed.</strong> Check your username and password, or wait a minute and try again if the server is restarting.';
+  errEl.style.display = 'block';
+  // Clear any stale ghost session
+  saveSession(null);
+  setAuthToken('');
 }
 
 // ===== ENROLLMENT CODES =====
