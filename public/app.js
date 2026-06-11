@@ -2191,6 +2191,18 @@ async function loadAdminModules(force = false) {
   return _adminModulesCache;
 }
 
+// Extract the first week number from strings like "Week 1", "Weeks 2-3",
+// "WEEKS 10–11", "Week 9". Modules with no parseable week sort to the end.
+function extractFirstWeekNumber(m) {
+  const s = String(m.week || m.subtitle || '').toLowerCase();
+  const match = s.match(/week[s]?\s*(\d+)/i);
+  if (match) return parseInt(match[1], 10);
+  // Fallback: any leading number anywhere in the string
+  const bare = s.match(/(\d+)/);
+  if (bare) return parseInt(bare[1], 10);
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function renderModuleManager() {
   setTimeout(async () => {
     const modules = await loadAdminModules(true);
@@ -2200,7 +2212,18 @@ function renderModuleManager() {
       container.innerHTML = '<p class="text-muted">No modules yet. Click "Add New Module" to create one.</p>';
       return;
     }
-    container.innerHTML = modules.map((m, idx) => `
+    // Sort modules by assigned week number (Week 1 first, Week 12 last).
+    // Modules with no week label fall to the bottom in their original order.
+    const sortedModules = [...modules].sort((a, b) => {
+      const wa = extractFirstWeekNumber(a);
+      const wb = extractFirstWeekNumber(b);
+      if (wa !== wb) return wa - wb;
+      // Tiebreaker: numeric module id, then string compare
+      const ia = Number(a.id), ib = Number(b.id);
+      if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    container.innerHTML = sortedModules.map((m, idx) => `
       <div class="card" style="margin-bottom:14px;">
         <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <div style="flex:1;min-width:240px;">
