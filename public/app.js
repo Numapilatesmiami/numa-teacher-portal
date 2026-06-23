@@ -3372,127 +3372,338 @@ function formatDuration(sec) {
 }
 
 // =============================================================================
-// ===== STUDENT: ASK A QUESTION ==============================================
+// ===== STUDENT: ASK A QUESTION — EMAIL-STYLE INBOX ==========================
 // =============================================================================
-function renderStudentQuestions() {
-  setTimeout(loadStudentQuestions, 0);
-  return `
-    <div class="page-header fade-in">
-      <h1>Ask a Question</h1>
-      <p>Send a private question to NUMA staff — they'll reply here</p>
-    </div>
-    <div class="card slide-up">
-      <div class="card-body">
-        <input id="q-subject" class="input" placeholder="Subject (optional)" style="margin-bottom:8px;">
-        <textarea id="q-body" class="input" rows="5" placeholder="Type your question…" style="resize:vertical;"></textarea>
-        <div style="margin-top:10px;display:flex;gap:8px;">
-          <button class="btn btn-primary" onclick="submitStudentQuestion()"><i class="fa-solid fa-paper-plane"></i> Send Question</button>
-        </div>
-      </div>
-    </div>
-    <h2 class="mb-2 mt-4" style="font-size:1.3rem;">My Questions</h2>
-    <div id="my-questions"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+
+// Inject inbox CSS once
+function _ensureInboxStyles() {
+  if (document.getElementById('numa-inbox-styles')) return;
+  const css = `
+  .inbox-shell{background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .inbox-head{padding:16px 20px;background:#fff;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;gap:12px;}
+  .inbox-head h1{margin:0;font-size:20px;color:#3b2f24;font-weight:600;}
+  .inbox-head .inbox-sub{font-size:12.5px;color:#8a7a6a;margin-top:2px;}
+  .inbox-compose-btn{background:#A38D78;color:#fff;border:0;padding:9px 16px;border-radius:9px;font-size:13.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+  .inbox-compose-btn:hover{background:#8e7967;}
+  .inbox-filters{padding:10px 20px;background:#fff;border-bottom:1px solid #f0e9da;display:flex;gap:6px;flex-wrap:wrap;}
+  .inbox-filter{background:transparent;border:1px solid transparent;color:#8a7a6a;padding:5px 12px;border-radius:999px;font-size:12.5px;cursor:pointer;font-weight:500;}
+  .inbox-filter:hover{background:#fafaf2;color:#3b2f24;}
+  .inbox-filter.active{background:#f5ede0;color:#3b2f24;border-color:#e6d9bf;}
+  .inbox-list{background:#fff;}
+  .inbox-empty{padding:40px 20px;text-align:center;color:#8a7a6a;}
+  .inbox-empty i{font-size:42px;color:#c7b9a3;display:block;margin-bottom:14px;}
+  .inbox-row{display:grid;grid-template-columns:auto 180px 1fr auto auto;align-items:center;gap:14px;padding:13px 20px;border-bottom:1px solid #f3ecdc;cursor:pointer;transition:background .12s;}
+  .inbox-row:last-child{border-bottom:0;}
+  .inbox-row:hover{background:#fafaf2;}
+  .inbox-row.unread{background:#fffaf0;}
+  .inbox-row.unread .inbox-from,.inbox-row.unread .inbox-subject{font-weight:700;color:#3b2f24;}
+  .inbox-dot{width:8px;height:8px;border-radius:50%;background:#A38D78;display:inline-block;}
+  .inbox-row:not(.unread) .inbox-dot{visibility:hidden;}
+  .inbox-from{font-size:13.5px;color:#3b2f24;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .inbox-snippet{min-width:0;font-size:13.5px;color:#6a5d4d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .inbox-snippet .inbox-subject{color:#3b2f24;font-weight:500;}
+  .inbox-snippet .inbox-preview{color:#8a7a6a;}
+  .inbox-meta{display:flex;align-items:center;gap:8px;}
+  .inbox-status-pill{font-size:10.5px;padding:2px 9px;border-radius:999px;font-weight:600;letter-spacing:.2px;text-transform:uppercase;}
+  .inbox-status-open{background:#e3f2fd;color:#1565c0;}
+  .inbox-status-answered{background:#e8f5e9;color:#2e7d32;}
+  .inbox-status-closed{background:#f5efe4;color:#6a5d4d;}
+  .inbox-reply-count{font-size:12px;color:#8a7a6a;display:inline-flex;align-items:center;gap:3px;}
+  .inbox-time{font-size:12px;color:#8a7a6a;white-space:nowrap;}
+
+  /* Email-thread view */
+  .email-thread{background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .email-thread-head{padding:18px 22px 14px;background:#fff;border-bottom:1px solid #e6dfd1;}
+  .email-thread-back{background:transparent;border:0;color:#A38D78;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;padding:0;margin-bottom:8px;}
+  .email-thread-back:hover{text-decoration:underline;}
+  .email-thread-title{margin:0;font-size:20px;color:#3b2f24;font-weight:600;line-height:1.3;}
+  .email-thread-meta{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;}
+  .email-msg{background:#fff;border-bottom:1px solid #f0e9da;padding:18px 22px;}
+  .email-msg:last-of-type{border-bottom:0;}
+  .email-msg-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px;}
+  .email-avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:14px;flex-shrink:0;}
+  .email-meta{flex:1;min-width:0;}
+  .email-from{font-size:14.5px;color:#3b2f24;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .email-staff-pill{background:#A38D78;color:#fff;font-size:10px;padding:1px 7px;border-radius:999px;font-weight:500;letter-spacing:.3px;}
+  .email-to{font-size:12.5px;color:#8a7a6a;margin-top:2px;}
+  .email-time{font-size:12.5px;color:#8a7a6a;white-space:nowrap;}
+  .email-body{font-size:14.5px;color:#3b2f24;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;padding-left:50px;}
+  .email-reply-card{background:#fff;border-top:1px solid #e6dfd1;padding:18px 22px;}
+  .email-reply-card label{display:block;font-size:12.5px;font-weight:600;color:#3b2f24;margin-bottom:6px;}
+  .email-reply-card textarea{width:100%;border:1px solid #e6dfd1;border-radius:10px;padding:11px 14px;font-family:inherit;font-size:14px;background:#fafaf7;color:#3b2f24;outline:none;box-sizing:border-box;resize:vertical;min-height:110px;}
+  .email-reply-card textarea:focus{border-color:#A38D78;background:#fff;}
+  .email-reply-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .email-reply-actions .btn-send{background:#A38D78;color:#fff;border:0;padding:9px 16px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+  .email-reply-actions .btn-send:hover{background:#8e7967;}
+  .email-reply-actions .btn-ghost-admin{background:transparent;border:1px solid #e6dfd1;color:#3b2f24;padding:9px 14px;border-radius:9px;font-size:13px;cursor:pointer;}
+  .email-reply-actions .btn-ghost-admin:hover{background:#fafaf2;}
+  .email-thread-closed{padding:16px 22px;background:#f5efe4;color:#6a5d4d;font-size:13px;text-align:center;border-top:1px solid #e6dfd1;}
+
+  /* Compose modal (reuses topic-modal styles where possible) */
+  .compose-modal{background:#fff;border-radius:14px;width:min(620px,94vw);box-shadow:0 8px 30px rgba(0,0,0,.18);overflow:hidden;}
+  .compose-modal .topic-modal-head{padding:14px 18px;border-bottom:1px solid #e6dfd1;}
+  .compose-row{padding:12px 18px;border-bottom:1px solid #f0e9da;display:flex;align-items:center;gap:10px;}
+  .compose-row .lbl{font-size:12.5px;color:#8a7a6a;font-weight:600;width:60px;flex-shrink:0;}
+  .compose-row input{flex:1;border:0;outline:0;font-family:inherit;font-size:14.5px;color:#3b2f24;background:transparent;padding:6px 0;}
+  .compose-body{padding:14px 18px;}
+  .compose-body textarea{width:100%;border:0;outline:0;font-family:inherit;font-size:14.5px;color:#3b2f24;background:transparent;resize:vertical;min-height:160px;line-height:1.55;box-sizing:border-box;}
+
+  @media(max-width:780px){
+    .inbox-row{grid-template-columns:auto 1fr auto;}
+    .inbox-from{display:none;}
+    .inbox-meta .inbox-status-pill{display:none;}
+    .email-body{padding-left:0;}
+  }
+  `;
+  const el = document.createElement('style');
+  el.id = 'numa-inbox-styles';
+  el.textContent = css;
+  document.head.appendChild(el);
 }
+
+window.NUMA_INBOX = window.NUMA_INBOX || { filter: 'all', list: [], isAdmin: false };
+
+function _inboxRelTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function _inboxAvatarColor(name, isStaff) {
+  if (isStaff) return '#A38D78';
+  const palette = ['#6b8e7e','#7a8aab','#9b7a8e','#8f7a55','#7a8a6e','#a07a6e','#6e8a92'];
+  let h = 0; for (let i = 0; i < (name||'').length; i++) h = (h*31 + name.charCodeAt(i)) >>> 0;
+  return palette[h % palette.length];
+}
+function _inboxInitials(name) {
+  const s = (name || 'User').trim();
+  const parts = s.split(/\s+/);
+  return ((parts[0]?.[0] || 'U') + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+function renderStudentQuestions() {
+  _ensureInboxStyles();
+  window.NUMA_INBOX.isAdmin = false;
+  setTimeout(loadStudentQuestions, 0);
+  const f = window.NUMA_INBOX.filter || 'all';
+  return `
+    <div class="inbox-shell fade-in">
+      <div class="inbox-head">
+        <div style="flex:1;min-width:0;">
+          <h1><i class="fa-regular fa-envelope" style="color:#A38D78;margin-right:8px;"></i>Messages</h1>
+          <div class="inbox-sub">Private messages between you and NUMA staff</div>
+        </div>
+        <button class="inbox-compose-btn" onclick="openComposeModal()"><i class="fa-solid fa-pen-to-square"></i> Compose</button>
+      </div>
+      <div class="inbox-filters">
+        <button class="inbox-filter ${f==='all'?'active':''}" onclick="setInboxFilter('all')">All</button>
+        <button class="inbox-filter ${f==='open'?'active':''}" onclick="setInboxFilter('open')">Open</button>
+        <button class="inbox-filter ${f==='answered'?'active':''}" onclick="setInboxFilter('answered')">Answered</button>
+        <button class="inbox-filter ${f==='closed'?'active':''}" onclick="setInboxFilter('closed')">Closed</button>
+      </div>
+      <div class="inbox-list" id="my-questions"><div class="inbox-empty">Loading…</div></div>
+    </div>`;
+}
+
+function setInboxFilter(f) {
+  window.NUMA_INBOX.filter = f;
+  // Re-render filter pills
+  document.querySelectorAll('.inbox-filter').forEach(b => b.classList.remove('active'));
+  const el = [...document.querySelectorAll('.inbox-filter')].find(b => b.textContent.trim().toLowerCase() === (f === 'all' ? 'all' : f));
+  if (el) el.classList.add('active');
+  renderInboxList();
+}
+window.setInboxFilter = setInboxFilter;
 
 async function loadStudentQuestions() {
   const list = await apiCall('/api/questions') || [];
+  window.NUMA_INBOX.list = list;
+  renderInboxList();
+}
+
+function renderInboxList() {
   const target = document.getElementById('my-questions');
   if (!target) return;
-  if (list.length === 0) {
-    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">You haven\'t asked any questions yet.</div></div>';
+  const isAdmin = window.NUMA_INBOX.isAdmin;
+  const filter = window.NUMA_INBOX.filter || 'all';
+  let list = window.NUMA_INBOX.list || [];
+  if (filter !== 'all') list = list.filter(q => q.status === filter);
+  if (!list.length) {
+    target.innerHTML = `<div class="inbox-empty"><i class="fa-regular fa-envelope-open"></i>${isAdmin ? 'No messages in this view.' : 'No messages yet. Click <strong>Compose</strong> to send your first question.'}</div>`;
     return;
   }
-  let rows = '';
-  list.forEach(q => {
-    const status = q.status === 'answered'
-      ? '<span class="badge badge-complete">Answered</span>'
-      : q.status === 'closed' ? '<span class="badge badge-locked">Closed</span>'
-      : '<span class="badge badge-progress">Open</span>';
-    rows += `
-      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('question-detail',{id:${q.id}})">
-        <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;">${escapeHtml(q.subject || '(No subject)')}</div>
-            <div class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((q.body || '').slice(0, 120))}</div>
-          </div>
-          <div style="text-align:right;">
-            ${status}
-            <div class="text-muted text-sm">${q.reply_count || 0} repl${q.reply_count === 1 ? 'y' : 'ies'}</div>
-          </div>
-        </div>
-      </div>`;
+  // Newest first (server already sorts; this is a defensive re-sort)
+  const sorted = [...list].sort((a, b) => {
+    const at = new Date(a.last_activity_at || a.updated_at || a.created_at).getTime();
+    const bt = new Date(b.last_activity_at || b.updated_at || b.created_at).getTime();
+    return bt - at;
   });
-  target.innerHTML = rows;
+  target.innerHTML = sorted.map(q => {
+    const statusKey = q.status === 'answered' ? 'answered' : (q.status === 'closed' ? 'closed' : 'open');
+    const statusLabel = statusKey === 'answered' ? 'Answered' : (statusKey === 'closed' ? 'Closed' : 'Open');
+    const subject = q.subject && q.subject.trim() ? q.subject : '(No subject)';
+    const preview = (q.body || '').replace(/\s+/g, ' ').slice(0, 100);
+    const from = isAdmin
+      ? (q.student_name || q.student_username || 'Student')
+      : 'You → NUMA Staff';
+    const time = _inboxRelTime(q.last_activity_at || q.updated_at || q.created_at);
+    const replies = q.reply_count || 0;
+    // Treat "open" with no replies as unread for the student view (so it stands out)
+    const isUnread = isAdmin ? (statusKey === 'open') : false;
+    const navTo = isAdmin
+      ? `navigate('admin',{view:'question-detail',id:${q.id}})`
+      : `navigate('question-detail',{id:${q.id}})`;
+    return `
+      <div class="inbox-row ${isUnread ? 'unread' : ''}" onclick="${navTo}">
+        <span class="inbox-dot"></span>
+        <div class="inbox-from">${escapeHtml(from)}</div>
+        <div class="inbox-snippet">
+          <span class="inbox-subject">${escapeHtml(subject)}</span>
+          <span class="inbox-preview"> — ${escapeHtml(preview)}</span>
+        </div>
+        <div class="inbox-meta">
+          ${replies > 0 ? `<span class="inbox-reply-count"><i class="fa-regular fa-comment"></i> ${replies}</span>` : ''}
+          <span class="inbox-status-pill inbox-status-${statusKey}">${statusLabel}</span>
+        </div>
+        <div class="inbox-time">${time}</div>
+      </div>`;
+  }).join('');
 }
+
+// Compose modal (replaces always-visible compose form)
+function openComposeModal() {
+  _ensureChatStyles(); // for the topic-modal backdrop styles already defined
+  if (document.getElementById('compose-modal-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'compose-modal-backdrop';
+  backdrop.className = 'topic-modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="compose-modal" onclick="event.stopPropagation()">
+      <div class="topic-modal-head">
+        <h3><i class="fa-regular fa-envelope" style="color:#A38D78;margin-right:6px;"></i> New Message</h3>
+        <button class="topic-modal-close" onclick="closeComposeModal()" title="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="compose-row"><span class="lbl">To</span><input value="NUMA Staff" disabled style="color:#6a5d4d;"></div>
+      <div class="compose-row"><span class="lbl">Subject</span><input id="compose-subject" placeholder="What's this about?" maxlength="160"></div>
+      <div class="compose-body">
+        <textarea id="compose-body" placeholder="Write your message…"></textarea>
+      </div>
+      <div class="topic-modal-foot">
+        <button class="btn-cancel" onclick="closeComposeModal()">Cancel</button>
+        <button class="btn-create" id="compose-send" onclick="submitStudentQuestion()"><i class="fa-solid fa-paper-plane"></i> Send</button>
+      </div>
+    </div>`;
+  backdrop.onclick = () => closeComposeModal();
+  document.body.appendChild(backdrop);
+  setTimeout(() => document.getElementById('compose-subject')?.focus(), 50);
+}
+window.openComposeModal = openComposeModal;
+
+function closeComposeModal() {
+  const el = document.getElementById('compose-modal-backdrop');
+  if (el) el.remove();
+}
+window.closeComposeModal = closeComposeModal;
 
 async function submitStudentQuestion() {
-  const subject = (document.getElementById('q-subject')?.value || '').trim();
-  const body = (document.getElementById('q-body')?.value || '').trim();
-  if (!body) { alert('Please type a question.'); return; }
+  const subject = (document.getElementById('compose-subject')?.value || '').trim();
+  const body = (document.getElementById('compose-body')?.value || '').trim();
+  if (!body) { alert('Please write a message.'); return; }
+  const btn = document.getElementById('compose-send');
+  if (btn) btn.disabled = true;
   const out = await apiCall('/api/questions', {
     method: 'POST',
-    body: JSON.stringify({ subject, body })
+    body: JSON.stringify({ subject: subject || '(No subject)', body })
   });
+  if (btn) btn.disabled = false;
   if (out) {
-    document.getElementById('q-subject').value = '';
-    document.getElementById('q-body').value = '';
+    closeComposeModal();
     loadStudentQuestions();
   } else {
-    alert('Could not submit. Please try again.');
+    alert('Could not send. Please try again.');
   }
 }
+window.submitStudentQuestion = submitStudentQuestion;
 
 function renderStudentQuestionDetail() {
+  _ensureInboxStyles();
   const id = APP.viewParams?.id;
   setTimeout(() => loadQuestionThread(id, false), 0);
-  return `
-    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('questions');return false;">My Questions</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
-    <div id="q-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+  return `<div id="q-thread"><div class="inbox-shell"><div class="inbox-empty">Loading…</div></div></div>`;
 }
 
 async function loadQuestionThread(id, isAdmin) {
+  _ensureInboxStyles();
   const data = await apiCall(`/api/questions/${id}`);
   const target = document.getElementById('q-thread');
   if (!target || !data) return;
   const q = data.question;
-  let html = `
-    <div class="card slide-up">
-      <div class="card-body">
-        <h2 style="margin:0 0 4px;">${escapeHtml(q.subject || '(No subject)')}</h2>
-        <div class="text-muted text-sm" style="margin-bottom:10px;">
-          From ${escapeHtml(q.student_name || q.student_username)} • ${new Date(q.created_at).toLocaleString()}
-          ${q.status === 'answered' ? '<span class="badge badge-complete" style="margin-left:8px;">Answered</span>' : ''}
-        </div>
-        <div style="white-space:pre-wrap;">${escapeHtml(q.body)}</div>
-      </div>
-    </div>`;
-  (data.replies || []).forEach(r => {
-    const isStaff = r.author_role === 'admin';
-    html += `
-      <div class="card" style="margin-top:10px;${isStaff ? 'border-left:4px solid var(--terracotta);' : ''}">
-        <div class="card-body">
-          <div class="text-muted text-sm" style="margin-bottom:6px;">
-            <strong>${escapeHtml(r.author_name || 'User')}</strong> ${isStaff ? '<span class="badge badge-complete">Staff</span>' : ''}
-            • ${new Date(r.created_at).toLocaleString()}
+  const replies = data.replies || [];
+  const statusKey = q.status === 'answered' ? 'answered' : (q.status === 'closed' ? 'closed' : 'open');
+  const statusLabel = statusKey === 'answered' ? 'Answered' : (statusKey === 'closed' ? 'Closed' : 'Open');
+  const backNav = isAdmin ? "navigate('admin',{view:'questions'});return false;" : "navigate('questions');return false;";
+  const backLabel = isAdmin ? 'Student Questions' : 'Messages';
+  // First message (original question) rendered as an email
+  const renderMsg = (m, opts = {}) => {
+    const isStaff = opts.isStaff || m.author_role === 'admin';
+    const name = opts.name || m.author_name || m.student_name || m.student_username || 'User';
+    const avatar = `<div class="email-avatar" style="background:${_inboxAvatarColor(name, isStaff)};">${_inboxInitials(name)}</div>`;
+    const time = new Date(m.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    const toLabel = isStaff ? `to ${escapeHtml(q.student_name || q.student_username || 'Student')}` : 'to NUMA Staff';
+    return `
+      <div class="email-msg">
+        <div class="email-msg-head">
+          ${avatar}
+          <div class="email-meta">
+            <div class="email-from">${escapeHtml(name)} ${isStaff ? '<span class="email-staff-pill">Staff</span>' : ''}</div>
+            <div class="email-to">${toLabel}</div>
           </div>
-          <div style="white-space:pre-wrap;">${escapeHtml(r.body)}</div>
+          <div class="email-time">${escapeHtml(time)}</div>
+        </div>
+        <div class="email-body">${escapeHtml(m.body || '')}</div>
+      </div>`;
+  };
+  let html = `
+    <div class="email-thread fade-in">
+      <div class="email-thread-head">
+        <button class="email-thread-back" onclick="${backNav}"><i class="fa-solid fa-chevron-left"></i> ${backLabel}</button>
+        <h2 class="email-thread-title">${escapeHtml(q.subject || '(No subject)')}</h2>
+        <div class="email-thread-meta">
+          <span class="inbox-status-pill inbox-status-${statusKey}">${statusLabel}</span>
+          <span class="text-muted text-sm" style="color:#8a7a6a;">${replies.length + 1} ${replies.length === 0 ? 'message' : 'messages'}</span>
         </div>
       </div>`;
-  });
-  // Reply box
-  if (q.status !== 'closed') {
+  // Original question
+  html += renderMsg({
+    created_at: q.created_at,
+    body: q.body,
+    author_role: 'student'
+  }, { name: q.student_name || q.student_username || 'Student', isStaff: false });
+  // Replies
+  replies.forEach(r => { html += renderMsg(r); });
+  // Reply box / closed banner
+  if (q.status === 'closed') {
+    html += `<div class="email-thread-closed"><i class="fa-solid fa-lock" style="margin-right:6px;"></i>This conversation has been closed.</div>`;
+  } else {
     html += `
-      <div class="card" style="margin-top:14px;">
-        <div class="card-body">
-          <textarea id="q-reply-body" class="input" rows="4" placeholder="${isAdmin ? 'Write a reply to the student…' : 'Reply…'}" style="resize:vertical;"></textarea>
-          <div style="margin-top:8px;display:flex;gap:8px;">
-            <button class="btn btn-primary" onclick="submitQuestionReply(${id}, ${isAdmin})"><i class="fa-solid fa-paper-plane"></i> Send Reply</button>
-            ${isAdmin ? `<button class="btn btn-secondary" onclick="updateQuestionStatus(${id},'answered')">Mark Answered</button>
-            <button class="btn btn-ghost" onclick="updateQuestionStatus(${id},'closed')">Close Thread</button>` : ''}
-          </div>
+      <div class="email-reply-card">
+        <label for="q-reply-body">Reply</label>
+        <textarea id="q-reply-body" placeholder="${isAdmin ? 'Write a reply to the student…' : 'Write your reply…'}"></textarea>
+        <div class="email-reply-actions">
+          <button class="btn-send" onclick="submitQuestionReply(${id}, ${isAdmin})"><i class="fa-solid fa-paper-plane"></i> Send Reply</button>
+          ${isAdmin ? `
+            <button class="btn-ghost-admin" onclick="updateQuestionStatus(${id},'answered')"><i class="fa-solid fa-check"></i> Mark Answered</button>
+            <button class="btn-ghost-admin" onclick="updateQuestionStatus(${id},'closed')"><i class="fa-solid fa-lock"></i> Close Thread</button>` : ''}
         </div>
       </div>`;
   }
+  html += `</div>`;
   target.innerHTML = html;
 }
 
@@ -3519,55 +3730,59 @@ async function updateQuestionStatus(id, status) {
 // ===== ADMIN: STUDENT QUESTIONS INBOX =======================================
 // =============================================================================
 function renderAdminQuestions() {
+  _ensureInboxStyles();
+  window.NUMA_INBOX.isAdmin = true;
   setTimeout(loadAdminQuestions, 0);
+  const f = window.NUMA_INBOX.filter || 'all';
   return `
     <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Student Questions</span></div>
-    <div class="page-header"><h1>Student Questions</h1><p>Reply to questions submitted by your students</p></div>
-    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('open')">Open</button>
-      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('answered')">Answered</button>
-      <button class="btn btn-secondary btn-sm" onclick="loadAdminQuestions('closed')">Closed</button>
-      <button class="btn btn-ghost btn-sm" onclick="loadAdminQuestions()">All</button>
-    </div>
-    <div id="admin-q-list"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+    <div class="inbox-shell fade-in">
+      <div class="inbox-head">
+        <div style="flex:1;min-width:0;">
+          <h1><i class="fa-regular fa-envelope" style="color:#A38D78;margin-right:8px;"></i>Student Questions</h1>
+          <div class="inbox-sub">Reply to questions submitted by your students</div>
+        </div>
+      </div>
+      <div class="inbox-filters">
+        <button class="inbox-filter ${f==='all'?'active':''}" onclick="setAdminInboxFilter('all')">All</button>
+        <button class="inbox-filter ${f==='open'?'active':''}" onclick="setAdminInboxFilter('open')">Open</button>
+        <button class="inbox-filter ${f==='answered'?'active':''}" onclick="setAdminInboxFilter('answered')">Answered</button>
+        <button class="inbox-filter ${f==='closed'?'active':''}" onclick="setAdminInboxFilter('closed')">Closed</button>
+      </div>
+      <div class="inbox-list" id="my-questions"><div class="inbox-empty">Loading…</div></div>
+    </div>`;
 }
+
+function setAdminInboxFilter(f) {
+  window.NUMA_INBOX.filter = f;
+  loadAdminQuestions(f === 'all' ? undefined : f);
+  // Update active state visually
+  document.querySelectorAll('.inbox-filter').forEach(b => b.classList.remove('active'));
+  const labelMap = { all: 'all', open: 'open', answered: 'answered', closed: 'closed' };
+  const target = [...document.querySelectorAll('.inbox-filter')].find(b => b.textContent.trim().toLowerCase() === labelMap[f]);
+  if (target) target.classList.add('active');
+}
+window.setAdminInboxFilter = setAdminInboxFilter;
 
 async function loadAdminQuestions(status) {
   const path = '/api/admin/questions' + (status ? '?status=' + status : '');
   const list = await apiCall(path) || [];
-  const target = document.getElementById('admin-q-list');
-  if (!target) return;
-  if (list.length === 0) {
-    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">No questions in this view.</div></div>';
-    return;
-  }
-  let rows = '';
-  list.forEach(q => {
-    const badge = q.status === 'answered'
-      ? '<span class="badge badge-complete">Answered</span>'
-      : q.status === 'closed' ? '<span class="badge badge-locked">Closed</span>'
-      : '<span class="badge badge-progress">Open</span>';
-    rows += `
-      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('admin',{view:'question-detail',id:${q.id}})">
-        <div class="card-body" style="display:flex;justify-content:space-between;gap:10px;">
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;">${escapeHtml(q.subject || '(No subject)')}</div>
-            <div class="text-muted text-sm">From <strong>${escapeHtml(q.student_name || q.student_username)}</strong> • ${new Date(q.created_at).toLocaleString()}</div>
-            <div class="text-muted text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml((q.body || '').slice(0, 140))}</div>
-          </div>
-          <div style="text-align:right;">${badge}<div class="text-muted text-sm">${q.reply_count} repl${q.reply_count === 1 ? 'y' : 'ies'}</div></div>
-        </div>
-      </div>`;
-  });
-  target.innerHTML = rows;
+  window.NUMA_INBOX.list = list;
+  // For admin view, the server-side filter already applied; render without re-filtering.
+  // Temporarily clear filter so renderInboxList shows whatever the server returned.
+  const prevFilter = window.NUMA_INBOX.filter;
+  window.NUMA_INBOX.filter = 'all';
+  renderInboxList();
+  window.NUMA_INBOX.filter = prevFilter;
 }
 
 function renderAdminQuestionDetail() {
+  _ensureInboxStyles();
   const id = APP.viewParams?.id;
   setTimeout(() => loadQuestionThread(id, true), 0);
   return `
     <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin',{view:'questions'});return false;">Student Questions</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
-    <div id="q-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+    <div id="q-thread"><div class="inbox-shell"><div class="inbox-empty">Loading…</div></div></div>`;
 }
 
 // =============================================================================
