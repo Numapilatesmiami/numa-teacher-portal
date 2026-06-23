@@ -4741,3 +4741,209 @@ async function syncStudentsFromBackend() {
   };
   handleLogin = window.handleLogin;
 })();
+
+// ============================================================
+// Student writes that were ONLY saving to localStorage:
+//   - module quiz scores
+//   - practice hours
+//   - scenario submissions
+// These wrappers POST to the backend after the local save so admins
+// can see real progress. They're safe to call even if offline: the
+// local save still happens, and the POST quietly fails.
+// ------------------------------------------------------------
+
+// 1. Module quiz scores
+(function wrapSubmitQuizForBackend() {
+  if (typeof submitQuiz !== 'function') return;
+  const _orig = submitQuiz;
+  window.submitQuiz = function(...args) {
+    const ret = _orig.apply(this, args);
+    try {
+      const state = window._quizState;
+      if (state && state.submitted && APP.currentUser && !APP.currentUser.isAdmin && API_BASE) {
+        const totalQ = state.questions ? state.questions.length : 0;
+        const correctCount = typeof state.correct === 'number' ? state.correct
+          : Math.round((state.score / 100) * totalQ);
+        apiCall('/api/quiz-scores', {
+          method: 'POST',
+          body: JSON.stringify({
+            module_id: state.moduleId,
+            score: correctCount,
+            total: totalQ,
+            time_spent_seconds: state.timeSpent || null,
+            attempt_data: { answers: state.answers || [], percentage: state.score }
+          })
+        }).catch(e => console.warn('[quiz-score sync]', e));
+      }
+    } catch (e) { console.warn('[quiz-score sync]', e); }
+    return ret;
+  };
+  submitQuiz = window.submitQuiz;
+})();
+
+// 2. Practice hours
+// Backend category column is a single string; map our local types onto it.
+(function wrapAddHourEntryForBackend() {
+  if (typeof addHourEntry !== 'function') return;
+  const _orig = addHourEntry;
+  window.addHourEntry = function(type, ...rest) {
+    // Capture inputs BEFORE _orig runs (it consumes the form fields)
+    const dateEl = document.getElementById('log-date');
+    const hoursEl = document.getElementById('log-hours');
+    const date = dateEl ? dateEl.value : null;
+    const hours = hoursEl ? parseFloat(hoursEl.value) : null;
+    let notesObj = {};
+    if (type === 'observation') {
+      notesObj = {
+        location: document.getElementById('log-location')?.value || '',
+        instructor: document.getElementById('log-instructor')?.value || ''
+      };
+    } else if (type === 'teaching') {
+      notesObj = {
+        classType: document.getElementById('log-classtype')?.value || '',
+        supervisor: document.getElementById('log-supervisor')?.value || ''
+      };
+    } else {
+      notesObj = {
+        practiceType: document.getElementById('log-practicetype')?.value || ''
+      };
+    }
+    notesObj.date = date;
+
+    const ret = _orig.apply(this, [type, ...rest]);
+
+    try {
+      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE && date && hours > 0) {
+        apiCall('/api/hours', {
+          method: 'POST',
+          body: JSON.stringify({
+            category: type,
+            hours: hours,
+            notes: JSON.stringify(notesObj)
+          })
+        }).catch(e => console.warn('[hours sync]', e));
+      }
+    } catch (e) { console.warn('[hours sync]', e); }
+    return ret;
+  };
+  addHourEntry = window.addHourEntry;
+})();
+
+// 3. Scenario submissions
+(function wrapSubmitScenarioForBackend() {
+  if (typeof submitScenario !== 'function') return;
+  const _orig = submitScenario;
+  window.submitScenario = function(scenarioId, ...rest) {
+    // Capture the responses BEFORE _orig clears the form
+    let captured = [];
+    try {
+      const sc = (typeof SCENARIO_POOL !== 'undefined') ? SCENARIO_POOL.find(s => s.id === scenarioId) : null;
+      if (sc && sc.prompts) {
+        sc.prompts.forEach((_, i) => {
+          const el = document.getElementById('scenario-resp-' + i);
+          captured.push(el ? el.value : '');
+        });
+      }
+    } catch (e) {}
+
+    const ret = _orig.apply(this, [scenarioId, ...rest]);
+
+    try {
+      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE) {
+        const responseText = captured.join('\n\n---\n\n');
+        const wordCount = responseText.split(/\s+/).filter(Boolean).length;
+        apiCall('/api/scenarios', {
+          method: 'POST',
+          body: JSON.stringify({
+            scenario_id: String(scenarioId),
+            response: responseText,
+            word_count: wordCount,
+            flagged: false,
+            flag_reason: null
+          })
+        }).catch(e => console.warn('[scenario sync]', e));
+      }
+    } catch (e) { console.warn('[scenario sync]', e); }
+    return ret;
+  };
+  submitScenario = window.submitScenario;
+})();
+
+// ============================================================
+// One-time backfill: push everything currently in this user's
+// localStorage to the backend. A student can run this from the
+// browser console after logging in to recover "lost" progress.
+// Usage in browser console:  await pushMyLocalProgress();
+// ------------------------------------------------------------
+async function pushMyLocalProgress() {
+  if (!APP.currentUser || APP.currentUser.isAdmin) {
+    console.warn('Must be logged in as a student');
+    return;
+  }
+  if (!API_BASE) {
+    console.warn('Backend not configured');
+    return;
+  }
+  const u = APP.currentUser;
+  let pushed = { quizzes: 0, hours: 0, scenarios: 0 };
+
+  // Quiz scores
+  if (u.quizScores) {
+    for (const [moduleId, pct] of Object.entries(u.quizScores)) {
+      const total = 10;
+      const score = Math.round((pct / 100) * total);
+      const r = await apiCall('/api/quiz-scores', {
+        method: 'POST',
+        body: JSON.stringify({
+          module_id: parseInt(moduleId, 10),
+          score, total,
+          time_spent_seconds: null,
+          attempt_data: { backfilled: true, percentage: pct }
+        })
+      });
+      if (r && !r.error) pushed.quizzes++;
+    }
+  }
+
+  // Hours
+  if (u.hourLogs) {
+    for (const type of ['observation', 'teaching', 'personal']) {
+      const entries = u.hourLogs[type] || [];
+      for (const e of entries) {
+        const r = await apiCall('/api/hours', {
+          method: 'POST',
+          body: JSON.stringify({
+            category: type,
+            hours: parseFloat(e.hours) || 0,
+            notes: JSON.stringify({ ...e, backfilled: true })
+          })
+        });
+        if (r && !r.error) pushed.hours++;
+      }
+    }
+  }
+
+  // Scenarios
+  if (Array.isArray(u.scenarioSubmissions)) {
+    for (const s of u.scenarioSubmissions) {
+      const responseText = Array.isArray(s.responses) ? s.responses.join('\n\n---\n\n') : '';
+      const wordCount = responseText.split(/\s+/).filter(Boolean).length;
+      const r = await apiCall('/api/scenarios', {
+        method: 'POST',
+        body: JSON.stringify({
+          scenario_id: String(s.scenarioId),
+          response: responseText,
+          word_count: wordCount,
+          flagged: false,
+          flag_reason: null
+        })
+      });
+      if (r && !r.error) pushed.scenarios++;
+    }
+  }
+
+  console.log('Backfill complete:', pushed);
+  alert('Backfill complete!\n' + pushed.quizzes + ' quiz scores, ' + pushed.hours + ' hour logs, ' + pushed.scenarios + ' scenarios sent to the database.');
+  return pushed;
+}
+window.pushMyLocalProgress = pushMyLocalProgress;
