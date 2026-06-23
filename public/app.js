@@ -2171,13 +2171,27 @@ let _adminModulesCache = null;
 async function loadAdminModules(force = false) {
   if (!force && _adminModulesCache) return _adminModulesCache;
   if (API_BASE) {
-    const data = await apiCall('/api/modules');
+    // Use the admin endpoint that returns ALL modules including unpublished
+    // drafts. Falls back to the public endpoint if the admin one isn't
+    // available (e.g. older backend or non-admin user).
+    let data = await apiCall('/api/admin/modules-all');
+    if (!data || data.error || !Array.isArray(data)) {
+      data = await apiCall('/api/modules');
+    }
     if (data && Array.isArray(data)) {
       // Hydrate each module with its sections
       const full = [];
       for (const m of data) {
         const detail = await apiCall(`/api/modules/${m.id}`);
-        full.push(detail || { ...m, sections: [] });
+        // detail may also be missing if module is unpublished and endpoint
+        // is strict — fall back to the basic module row in that case
+        if (detail && !detail.error) {
+          // Make sure is_published from the list is preserved (detail may
+          // overwrite it; keep both sources merged with detail winning)
+          full.push({ ...m, ...detail });
+        } else {
+          full.push({ ...m, sections: [] });
+        }
       }
       _adminModulesCache = full;
       return full;
@@ -2223,25 +2237,31 @@ function renderModuleManager() {
       if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
       return String(a.id).localeCompare(String(b.id));
     });
-    container.innerHTML = sortedModules.map((m, idx) => `
-      <div class="card" style="margin-bottom:14px;">
+    container.innerHTML = sortedModules.map((m, idx) => {
+      const isDraft = m.is_published === false;
+      return `
+      <div class="card" style="margin-bottom:14px;${isDraft ? 'border-left:4px solid var(--warning);background:#fffaf3;' : ''}">
         <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <div style="flex:1;min-width:240px;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;">
               <i class="fa-solid ${m.icon || 'fa-book'}" style="color:var(--terracotta);"></i>
               <strong style="font-size:1.05rem;">${escapeHtml(m.title)}</strong>
-              <span class="badge ${m.is_published === false ? 'badge-warning' : 'badge-complete'}">${m.is_published === false ? 'Draft' : 'Published'}</span>
+              <span class="badge ${isDraft ? 'badge-warning' : 'badge-complete'}" title="${isDraft ? 'Hidden from students' : 'Visible to students'}">
+                <i class="fa-solid ${isDraft ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isDraft ? 'Draft (hidden)' : 'Published'}
+              </span>
             </div>
             <div class="text-muted" style="font-size:0.85rem;">${escapeHtml(m.week || m.subtitle || '')}</div>
             <div class="text-muted" style="font-size:0.8rem;margin-top:4px;">${(m.sections || []).length} section${(m.sections || []).length !== 1 ? 's' : ''}</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${isDraft ? `<button class="btn btn-primary btn-sm" onclick="quickTogglePublish('${m.id}', true)" title="Make visible to students"><i class="fa-solid fa-eye"></i> Publish</button>` : `<button class="btn btn-secondary btn-sm" onclick="quickTogglePublish('${m.id}', false)" title="Hide from students"><i class="fa-solid fa-eye-slash"></i> Unpublish</button>`}
             <button class="btn btn-secondary btn-sm" onclick="navigate('admin',{view:'editModule',moduleId:'${m.id}'})"><i class="fa-solid fa-pen"></i> Edit</button>
             <button class="btn btn-secondary btn-sm" onclick="deleteModuleConfirm('${m.id}', '${escapeAttr(m.title)}')"><i class="fa-solid fa-trash"></i> Delete</button>
           </div>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   }, 50);
 
   return `
@@ -4580,4 +4600,144 @@ async function applyModuleContentOverrides() {
     return r;
   };
   saveSection = window.saveSection;
+})();
+
+// Quick publish/unpublish toggle from the Course Content Manager list.
+// Fetches the current module, flips is_published, and PUTs the full body
+// back (the backend's PUT requires all the editable fields).
+async function quickTogglePublish(moduleId, makePublished) {
+  if (!API_BASE) {
+    alert('Backend not connected — cannot toggle publish state.');
+    return;
+  }
+  // Get current module data so we preserve all the other fields
+  const current = await apiCall('/api/modules/' + encodeURIComponent(moduleId));
+  if (!current || current.error) {
+    // The public endpoint might 404 unpublished modules; fall back to admin-all
+    const all = await apiCall('/api/admin/modules-all');
+    if (Array.isArray(all)) {
+      const found = all.find(m => String(m.id) === String(moduleId));
+      if (found) {
+        return _doTogglePublish(found, makePublished);
+      }
+    }
+    alert('Could not find this module to update. Try refreshing the page.');
+    return;
+  }
+  return _doTogglePublish(current, makePublished);
+}
+
+async function _doTogglePublish(mod, makePublished) {
+  const payload = {
+    title: mod.title,
+    subtitle: mod.subtitle,
+    description: mod.description,
+    icon: mod.icon,
+    sort_order: mod.sort_order,
+    is_published: !!makePublished
+  };
+  const res = await apiCall('/api/admin/modules/' + encodeURIComponent(mod.id), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+  if (res && !res.error) {
+    _adminModulesCache = null;
+    // Re-render the module manager so the badge + button flip
+    if (typeof renderModuleManager === 'function') {
+      // Trigger a fresh load of the manager view
+      navigate('admin', { view: 'modules' });
+    }
+  } else {
+    alert('Update failed: ' + ((res && res.error) || 'unknown error'));
+  }
+}
+
+// ============================================================
+// Admin: sync students list from backend into localStorage
+// ------------------------------------------------------------
+// The admin pages render the students table from getUsers() which reads
+// localStorage. Students live in the Railway Postgres DB, so when the admin
+// signs in on a fresh browser, the local list is empty. This pulls the
+// canonical student list from the backend and merges it into numa_users so
+// every existing admin view (Students table, Gradebook, etc.) just works.
+async function syncStudentsFromBackend() {
+  if (!API_BASE) return false;
+  if (!APP.currentUser || !APP.currentUser.isAdmin) return false;
+  const rows = await apiCall('/api/admin/students');
+  if (!rows || rows.error || !Array.isArray(rows)) {
+    console.warn('[admin] could not fetch students from backend', rows);
+    return false;
+  }
+
+  const local = getUsers();
+  const byUsername = {};
+  local.forEach(u => { byUsername[u.username] = u; });
+
+  rows.forEach(row => {
+    const existing = byUsername[row.username];
+    if (existing) {
+      // Refresh server-owned fields, keep local progress fields intact
+      existing.fullName = row.full_name || existing.fullName || row.username;
+      existing.email = row.email || existing.email;
+      existing.createdAt = row.created_at || existing.createdAt;
+      existing.enrollmentCode = row.enrollment_code || existing.enrollmentCode;
+      existing.backendId = row.id;
+    } else {
+      const fresh = createDefaultUserData(row.username, row.full_name || row.username);
+      fresh.email = row.email || '';
+      fresh.createdAt = row.created_at || new Date().toISOString();
+      fresh.enrollmentCode = row.enrollment_code || '';
+      fresh.backendId = row.id;
+      local.push(fresh);
+      byUsername[row.username] = fresh;
+    }
+  });
+
+  // Persist the merged list
+  try { _sSet('numa_users', JSON.stringify(local)); }
+  catch (e) { console.warn('[admin] failed to save merged users', e); }
+  return true;
+}
+
+// Wrap renderAdminContent so the first paint kicks off a background sync.
+// We render immediately (so the page never blanks) and re-render once the
+// fresh data arrives. Guarded so a single navigation only syncs once.
+(function wrapAdminRenderForSync() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  let _syncInFlight = false;
+  let _lastSyncedAt = 0;
+  window.renderAdminContent = function() {
+    const now = Date.now();
+    // Refresh at most every 5 seconds to avoid render loops
+    if (!_syncInFlight && (now - _lastSyncedAt) > 5000 && APP.currentUser && APP.currentUser.isAdmin) {
+      _syncInFlight = true;
+      syncStudentsFromBackend().then(changed => {
+        _lastSyncedAt = Date.now();
+        _syncInFlight = false;
+        if (changed) {
+          // Re-render with fresh data, but only if we're still on an admin view
+          if (APP.currentUser && APP.currentUser.isAdmin) {
+            try { render(); } catch (e) {}
+          }
+        }
+      });
+    }
+    return _orig.apply(this, arguments);
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+// Also kick off a sync immediately after admin login.
+(function wrapHandleLoginForStudentSync() {
+  if (typeof handleLogin !== 'function') return;
+  const _orig = handleLogin;
+  window.handleLogin = async function(...args) {
+    const ret = await _orig.apply(this, args);
+    if (APP.currentUser && APP.currentUser.isAdmin) {
+      try { await syncStudentsFromBackend(); render(); } catch (e) {}
+    }
+    return ret;
+  };
+  handleLogin = window.handleLogin;
 })();
