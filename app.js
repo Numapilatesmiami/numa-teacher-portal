@@ -3886,6 +3886,9 @@ function _ensureChatStyles() {
   .chat-send:hover{background:#8e7967;}
   .chat-send:disabled{opacity:.45;cursor:not-allowed;}
   .chat-thread-back{background:transparent;border:0;color:#A38D78;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;padding:0;}
+  .chat-disclaimer{padding:8px 14px 10px;background:#fafaf7;border-top:1px solid #f0e9da;color:#8a7a6a;font-size:11.5px;line-height:1.45;display:flex;align-items:flex-start;gap:7px;}
+  .chat-disclaimer i{color:#A38D78;margin-top:2px;flex-shrink:0;}
+  .chat-disclaimer strong{color:#5a4a36;font-weight:600;}
 
   /* Two-pane topic forum */
   .forum-2pane{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 200px);min-height:560px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
@@ -4210,6 +4213,10 @@ async function selectTopic(id, opts = {}) {
       <div class="chat-composer">
         <textarea id="chat-input" rows="1" placeholder="Reply to this topic…" oninput="_chatAutoGrow(this)" onkeydown="_chatKeydown(event, () => replyForumThread(${id}))"></textarea>
         <button class="chat-send" id="chat-send-btn" onclick="replyForumThread(${id})" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+      <div class="chat-disclaimer">
+        <i class="fa-solid fa-heart"></i>
+        <div><strong>Keep it respectful</strong> — no profanity or vulgar language. Use this chat to ask each other questions, share tips &amp; tricks in teaching or cueing, or offer advice and encouragement.</div>
       </div>
     </div>`;
   // Show mobile back button when narrow
