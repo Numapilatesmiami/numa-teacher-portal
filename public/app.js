@@ -924,6 +924,12 @@ function renderHourTabContent(type) {
         <i class="fa-solid fa-circle-info"></i>
         <div><strong>Observation hours must be completed with a NUMA Pilates instructor.</strong> Hours observed at other studios will not count toward your certification.</div>
       </div>`;
+  } else if (type === 'teaching') {
+    disclaimer = `
+      <div class="hour-disclaimer">
+        <i class="fa-solid fa-circle-info"></i>
+        <div><strong>Teaching practicum hours must be supervised by a NUMA Pilates instructor and completed at NUMA Pilates.</strong> Teaching done outside of NUMA will not count toward your certification.</div>
+      </div>`;
   } else if (type === 'personal') {
     disclaimer = `
       <div class="hour-disclaimer">
