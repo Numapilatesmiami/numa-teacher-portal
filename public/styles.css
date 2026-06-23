@@ -1203,6 +1203,75 @@ button, input, select, textarea {
   .exercise-detail { grid-template-columns: 1fr; }
 
   .nav-logo-sub { display: none; }
+
+  /* Make the top nav comfortable on phones */
+  .top-nav { padding: 10px 14px; }
+  .nav-logo-text { font-size: 1rem; }
+
+  /* Tables — let them scroll horizontally instead of overflow the page */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Generic content cards / forms */
+  .card, .module-card, .login-card, .quiz-section, .module-content {
+    border-radius: 12px;
+  }
+
+  /* Stat cards collapse to single column on small phones */
+  @media (max-width: 420px) {
+    .stats-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Forms that use multi-column layouts */
+  .form-row { grid-template-columns: 1fr !important; }
+
+  /* Catch-all: any inline 2-col grid in admin pages collapses on mobile */
+  [style*="grid-template-columns:1fr 1fr"],
+  [style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Images and videos never overflow their container */
+  img, video, iframe { max-width: 100%; height: auto; }
+
+  /* Buttons stretch full-width when stacked */
+  .btn-row, .form-actions { flex-wrap: wrap; }
+  .btn-row .btn, .form-actions .btn { flex: 1 1 auto; min-width: 0; }
+
+  /* Inputs slightly larger for touch */
+  input, select, textarea, button { font-size: 16px; }
+  input[type="text"], input[type="email"], input[type="password"], input[type="number"], select, textarea {
+    min-height: 42px;
+  }
+
+  /* Modals — make them fit the screen */
+  .modal, .topic-modal { width: 94vw !important; max-width: 94vw !important; }
+
+  /* Chat shell — adapt to phone viewport */
+  .chat-shell { height: calc(100vh - 160px); min-height: 0; }
+  .chat-row { max-width: 88%; }
+  .chat-bubble { font-size: 14px; }
+  .chat-composer { padding: 8px 10px; }
+  .chat-composer textarea { font-size: 16px; }
+
+  /* Notifications bell panel sits inside header — keep it narrow */
+  .notif-panel { width: calc(100vw - 24px) !important; right: 12px !important; }
+
+  /* Discussion forum two-pane already handles this via its own breakpoint */
+}
+
+/* Even tighter for phones < 480px */
+@media (max-width: 480px) {
+  .main-content { padding: 16px 12px; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; }
+  h3 { font-size: 1.05rem; }
+  .top-nav { gap: 8px; }
+  .login-card { padding: 24px 18px; }
+  .module-content { padding: 18px 14px; }
+  .quiz-section { padding: 18px 14px; }
+  .certificate { padding: 24px 14px; }
+  /* Sidebar covers most of the screen */
+  .sidebar { width: calc(100vw - 48px); max-width: 320px; }
 }
 
 .mobile-menu-btn {
