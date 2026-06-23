@@ -272,6 +272,62 @@ export async function initDatabase() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_homework_comments_submission ON homework_comments(submission_id, created_at);
+
+      -- ===== MODULE SCENARIOS =====
+      -- Admin-authored scenario prompts attached to a module. Become available
+      -- to students only after they have completed the module (quiz passed).
+      CREATE TABLE IF NOT EXISTS module_scenarios (
+        id SERIAL PRIMARY KEY,
+        module_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        questions JSONB NOT NULL DEFAULT '[]'::jsonb, -- array of strings
+        min_word_count INTEGER DEFAULT 0,
+        is_required BOOLEAN DEFAULT TRUE,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_module_scenarios_module ON module_scenarios(module_id, sort_order);
+
+      -- Student submissions for module-linked scenarios. Mirrors the older
+      -- scenarios table but tied to a module_scenarios row. One latest
+      -- submission per (module_scenario, user); replaceable until graded.
+      CREATE TABLE IF NOT EXISTS module_scenario_submissions (
+        id SERIAL PRIMARY KEY,
+        module_scenario_id INTEGER NOT NULL REFERENCES module_scenarios(id) ON DELETE CASCADE,
+        module_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        response TEXT NOT NULL,
+        word_count INTEGER,
+        score INTEGER,
+        feedback TEXT,
+        status TEXT NOT NULL DEFAULT 'submitted', -- submitted | approved | needs_revision
+        submitted_at TIMESTAMPTZ DEFAULT NOW(),
+        graded_at TIMESTAMPTZ,
+        graded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        UNIQUE (module_scenario_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_module_scenario_subs_user ON module_scenario_submissions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_module_scenario_subs_module ON module_scenario_submissions(module_id);
+      CREATE INDEX IF NOT EXISTS idx_module_scenario_subs_status ON module_scenario_submissions(status, submitted_at DESC);
+
+      -- ===== NOTIFICATIONS =====
+      -- A small inbox per user. Created server-side when events happen
+      -- (new homework feedback, new scenario assignment, new forum message, etc.).
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,           -- homework_feedback | homework_comment | scenario_assigned | scenario_graded | forum_message
+        title TEXT NOT NULL,
+        body TEXT,
+        link_view TEXT,               -- e.g. 'homework', 'scenarios', 'forum', 'forum-thread'
+        link_params JSONB,            -- e.g. { id: 12, moduleId: 3 }
+        is_read BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);
     `);
 
     // Seed default enrollment codes if table is empty

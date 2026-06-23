@@ -309,7 +309,41 @@ app.put('/api/admin/scenarios/:id/grade', adminRequired, async (req, res) => {
     `UPDATE scenarios SET score=$1, feedback=$2, graded_at=NOW() WHERE id=$3 RETURNING *`,
     [score, feedback, req.params.id]
   );
-  res.json(result.rows[0]);
+  const row = result.rows[0];
+  if (row) {
+    notify(row.user_id, {
+      type: 'scenario_graded',
+      title: `Scenario graded: ${score}%`,
+      body: feedback ? String(feedback).slice(0, 240) : 'Your instructor has reviewed your scenario.',
+      link_view: 'scenarios',
+      link_params: null
+    });
+  }
+  res.json(row);
+});
+
+// Admin can manually assign one or more scenario IDs to a student.
+// This writes a record into `scenarios` with status placeholder and
+// (more importantly) fires a notification so the student sees "Scenario assigned".
+app.post('/api/admin/scenarios/assign', adminRequired, async (req, res) => {
+  try {
+    const { user_id, scenario_ids, note } = req.body || {};
+    if (!user_id || !Array.isArray(scenario_ids) || scenario_ids.length === 0) {
+      return res.status(400).json({ error: 'user_id and scenario_ids[] required' });
+    }
+    const ids = scenario_ids.map(String).slice(0, 20);
+    await notify(user_id, {
+      type: 'scenario_assigned',
+      title: ids.length === 1 ? 'New scenario assigned' : `${ids.length} new scenarios assigned`,
+      body: note ? String(note).slice(0, 240) : 'Your instructor has assigned scenarios for you to complete.',
+      link_view: 'scenarios',
+      link_params: { assignedIds: ids }
+    });
+    res.json({ ok: true, assigned: ids });
+  } catch (e) {
+    console.error('scenario assign error', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ===== PRACTICE HOURS =====
@@ -745,6 +779,89 @@ function filenameFromUrl(videoUrl) {
   return (videoUrl || '').replace(/^\/uploads\//, '');
 }
 
+// ===== NOTIFICATIONS HELPERS =====
+// Best-effort: never throw to the caller. We don't want a notification failure
+// to bubble up and break the action that triggered it.
+async function notify(userId, payload) {
+  try {
+    if (!userId) return;
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, link_view, link_params)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [userId, payload.type, payload.title, payload.body || null,
+        payload.link_view || null, JSON.stringify(payload.link_params || null)]
+    );
+  } catch (e) {
+    console.warn('[notify] failed:', e.message);
+  }
+}
+async function notifyAllStudentsExcept(excludeUserId, payload) {
+  try {
+    const ids = await pool.query(
+      "SELECT id FROM users WHERE role != 'admin' AND id != $1",
+      [excludeUserId || 0]
+    );
+    for (const row of ids.rows) await notify(row.id, payload);
+  } catch (e) { console.warn('[notify-all] failed:', e.message); }
+}
+async function notifyAdmins(payload) {
+  try {
+    const ids = await pool.query("SELECT id FROM users WHERE role = 'admin'");
+    for (const row of ids.rows) await notify(row.id, payload);
+  } catch (e) { console.warn('[notify-admins] failed:', e.message); }
+}
+
+// ----- Notification endpoints -----
+app.get('/api/notifications', authRequired, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '30', 10), 100);
+    const result = await pool.query(
+      `SELECT id, type, title, body, link_view, link_params, is_read, created_at
+         FROM notifications
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [req.user.id, limit]
+    );
+    const unread = await pool.query(
+      'SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = $1 AND is_read = FALSE',
+      [req.user.id]
+    );
+    res.json({ items: result.rows, unread_count: unread.rows[0].c });
+  } catch (e) {
+    console.error('GET notifications', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/notifications/mark-read', authRequired, async (req, res) => {
+  try {
+    const { ids, all } = req.body || {};
+    if (all) {
+      await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [req.user.id]);
+    } else if (Array.isArray(ids) && ids.length) {
+      await pool.query(
+        'UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND id = ANY($2::int[])',
+        [req.user.id, ids.map(Number).filter(Boolean)]
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('mark-read', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/notifications/:id', authRequired, async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM notifications WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Public: student fetches the homework prompt + their own current submission for a module
 app.get('/api/modules/:moduleId/homework', authRequired, async (req, res) => {
   try {
@@ -1021,11 +1138,23 @@ app.patch('/api/admin/homework-submissions/:id', adminRequired, async (req, res)
     vals.push(req.params.id);
     const result = await pool.query(
       `UPDATE homework_submissions SET ${sets.join(', ')} WHERE id = $${i}
-       RETURNING id, status, admin_feedback, reviewed_at`,
+       RETURNING id, status, admin_feedback, reviewed_at, user_id, module_id`,
       vals
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Submission not found' });
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    // Notify the student that their homework now has feedback / a grade
+    const statusLabel = row.status === 'approved' ? 'Approved'
+      : row.status === 'needs_revision' ? 'Needs revision'
+      : 'Reviewed';
+    notify(row.user_id, {
+      type: 'homework_feedback',
+      title: `Homework reviewed: ${statusLabel}`,
+      body: admin_feedback ? String(admin_feedback).slice(0, 240) : 'Your instructor has reviewed your homework.',
+      link_view: 'module',
+      link_params: { id: row.module_id, section: `${row.module_id}-quiz` }
+    });
+    res.json(row);
   } catch (e) {
     console.error('PATCH submission error', e);
     res.status(500).json({ error: e.message });
@@ -1083,6 +1212,27 @@ app.post('/api/homework-submissions/:id/comments', authRequired, async (req, res
     );
     // Attach author info for the response
     const u = await pool.query('SELECT full_name, username FROM users WHERE id = $1', [req.user.id]);
+    // Notify the other party (admin comment -> student; student comment -> admins)
+    const subMeta = await pool.query('SELECT user_id, module_id FROM homework_submissions WHERE id = $1', [req.params.id]);
+    const subRow = subMeta.rows[0];
+    const preview = String(body).trim().slice(0, 200);
+    if (isAdmin && subRow) {
+      notify(subRow.user_id, {
+        type: 'homework_comment',
+        title: 'New homework feedback',
+        body: preview,
+        link_view: 'module',
+        link_params: { id: subRow.module_id, section: `${subRow.module_id}-quiz` }
+      });
+    } else if (subRow) {
+      notifyAdmins({
+        type: 'homework_comment',
+        title: 'Student replied on homework',
+        body: preview,
+        link_view: 'admin',
+        link_params: { view: 'homework-inbox' }
+      });
+    }
     res.json({ ...result.rows[0], full_name: u.rows[0]?.full_name, username: u.rows[0]?.username });
   } catch (e) {
     console.error('POST comment error', e);
@@ -1479,6 +1629,27 @@ app.post('/api/forum/posts', authRequired, async (req, res) => {
       `INSERT INTO forum_posts (user_id, body, parent_id) VALUES ($1, $2, $3) RETURNING *`,
       [req.user.id, body.trim(), parent_id || null]
     );
+    // Notify everyone except the author (admins included). Cap body preview.
+    const u = await pool.query('SELECT full_name, username, role FROM users WHERE id = $1', [req.user.id]);
+    const author = u.rows[0] || {};
+    const name = author.full_name || author.username || 'Someone';
+    const isReply = !!parent_id;
+    const preview = body.trim().slice(0, 200);
+    const topId = parent_id || result.rows[0].id;
+    // Notify all OTHER users (students + admins) about the new message
+    pool.query("SELECT id FROM users WHERE id != $1", [req.user.id])
+      .then(async (r) => {
+        for (const row of r.rows) {
+          await notify(row.id, {
+            type: 'forum_message',
+            title: isReply ? `${name} replied in a thread` : `${name} posted in the channel`,
+            body: preview,
+            link_view: isReply ? 'forum-thread' : 'forum',
+            link_params: isReply ? { id: topId } : null
+          });
+        }
+      })
+      .catch(e => console.warn('[forum notify] failed', e.message));
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

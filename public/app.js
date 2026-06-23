@@ -3845,147 +3845,294 @@ async function submitSectionQuiz() {
 // =============================================================================
 // ===== DISCUSSION FORUM =====================================================
 // =============================================================================
-function renderForumList() {
-  setTimeout(loadForumPosts, 0);
+// =============================================================================
+// ===== DISCUSSION FORUM — chat-room style ===================================
+// =============================================================================
+// Injects chat CSS once (so we don't depend on style.css edits).
+function _ensureChatStyles() {
+  if (document.getElementById('numa-chat-styles')) return;
+  const css = `
+  .chat-shell{display:flex;flex-direction:column;height:calc(100vh - 200px);min-height:520px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .chat-header{padding:14px 18px;background:#fff;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;gap:12px;}
+  .chat-header h2{margin:0;font-size:17px;color:#3b2f24;}
+  .chat-header .chat-sub{font-size:12px;color:#8a7a6a;}
+  .chat-stream{flex:1 1 auto;overflow-y:auto;padding:18px 16px 12px;display:flex;flex-direction:column;gap:4px;}
+  .chat-empty{margin:auto;text-align:center;color:#8a7a6a;font-size:14px;}
+  .chat-day-divider{align-self:center;margin:10px 0 4px;padding:3px 12px;border-radius:999px;background:#fff;border:1px solid #e6dfd1;color:#8a7a6a;font-size:11px;letter-spacing:.4px;text-transform:uppercase;}
+  .chat-row{display:flex;gap:10px;align-items:flex-end;max-width:78%;}
+  .chat-row.me{align-self:flex-end;flex-direction:row-reverse;}
+  .chat-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:13px;flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.06);}
+  .chat-bubble{background:#fff;border:1px solid #ece4d5;padding:9px 13px;border-radius:16px;color:#3b2f24;white-space:pre-wrap;word-wrap:break-word;line-height:1.45;font-size:14.5px;position:relative;}
+  .chat-row.me .chat-bubble{background:#A38D78;color:#fff;border-color:#A38D78;}
+  .chat-row.staff .chat-bubble{background:#fff8ee;border-color:#e8d9b8;}
+  .chat-meta{font-size:11px;color:#8a7a6a;margin:6px 4px 2px;}
+  .chat-row.me .chat-meta{text-align:right;}
+  .chat-name{font-weight:600;color:#3b2f24;}
+  .chat-staff-pill{display:inline-block;background:#A38D78;color:#fff;font-size:10px;padding:1px 7px;border-radius:999px;margin-left:5px;letter-spacing:.3px;}
+  .chat-actions{display:none;gap:6px;position:absolute;top:-12px;right:8px;background:#fff;border:1px solid #e6dfd1;border-radius:8px;padding:2px 4px;box-shadow:0 2px 4px rgba(0,0,0,.05);}
+  .chat-row.me .chat-actions{right:auto;left:8px;}
+  .chat-bubble:hover .chat-actions{display:inline-flex;}
+  .chat-act-btn{background:transparent;border:0;color:#8a7a6a;font-size:12px;padding:2px 6px;cursor:pointer;border-radius:5px;}
+  .chat-act-btn:hover{background:#f3ece0;color:#3b2f24;}
+  .chat-pin-banner{padding:10px 14px;background:#fff8ee;border-bottom:1px solid #e8d9b8;color:#5a4a36;font-size:13px;display:flex;align-items:flex-start;gap:8px;}
+  .chat-pin-banner i{color:#A38D78;margin-top:3px;}
+  .chat-thread-link{align-self:flex-start;margin-left:46px;margin-top:2px;font-size:11.5px;color:#A38D78;cursor:pointer;text-decoration:none;display:inline-flex;gap:4px;align-items:center;background:transparent;border:0;padding:2px 0;}
+  .chat-row.me + .chat-thread-link{align-self:flex-end;margin-left:0;margin-right:46px;}
+  .chat-thread-link:hover{text-decoration:underline;}
+  .chat-composer{border-top:1px solid #e6dfd1;background:#fff;padding:10px 12px;display:flex;gap:8px;align-items:flex-end;}
+  .chat-composer textarea{flex:1 1 auto;resize:none;border:1px solid #e6dfd1;border-radius:12px;padding:10px 14px;font-family:inherit;font-size:14.5px;line-height:1.4;background:#fafaf7;color:#3b2f24;max-height:140px;outline:none;}
+  .chat-composer textarea:focus{border-color:#A38D78;background:#fff;}
+  .chat-send{background:#A38D78;color:#fff;border:0;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
+  .chat-send:hover{background:#8e7967;}
+  .chat-send:disabled{opacity:.45;cursor:not-allowed;}
+  .chat-thread-back{background:transparent;border:0;color:#A38D78;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;padding:0;}
+  `;
+  const el = document.createElement('style');
+  el.id = 'numa-chat-styles';
+  el.textContent = css;
+  document.head.appendChild(el);
+}
+
+function _chatInitials(name) {
+  const s = (name || 'User').trim();
+  const parts = s.split(/\s+/);
+  return ((parts[0]?.[0] || 'U') + (parts[1]?.[0] || '')).toUpperCase();
+}
+// Deterministic color per author from a small brand-friendly palette
+function _chatAvatarColor(name, isStaff) {
+  if (isStaff) return '#A38D78';
+  const palette = ['#6b8e7e','#7a8aab','#9b7a8e','#8f7a55','#7a8a6e','#a07a6e','#6e8a92'];
+  let h = 0; for (let i = 0; i < (name||'').length; i++) h = (h*31 + name.charCodeAt(i)) >>> 0;
+  return palette[h % palette.length];
+}
+function _chatTimeLabel(d) {
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+  const isYest = d.toDateString() === yest.toDateString();
+  if (isToday) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (isYest)  return 'Yesterday ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+function _chatDayLabel(d) {
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) return 'Today';
+  const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+}
+function _chatBubble(msg, ctx) {
+  const me = APP.currentUser;
+  const isMe = msg.user_id === me?.id;
+  const isStaff = msg.author_role === 'admin';
+  const isAdmin = !!me?.isAdmin;
+  const canDelete = isAdmin || msg.user_id === me?.id;
+  const name = msg.author_name || 'User';
+  const avatar = `<div class="chat-avatar" style="background:${_chatAvatarColor(name, isStaff)};" title="${escapeAttr(name)}">${_chatInitials(name)}</div>`;
+  const meta = `<div class="chat-meta"><span class="chat-name">${escapeHtml(name)}</span>${isStaff ? '<span class="chat-staff-pill">Staff</span>' : ''} <span style="opacity:.7;">• ${_chatTimeLabel(new Date(msg.created_at))}</span></div>`;
+  const pinAct = ctx.threadMode && isAdmin ? `<button class="chat-act-btn" title="${msg.is_pinned?'Unpin':'Pin'}" onclick="toggleForumPin(${msg.id}, ${!msg.is_pinned})"><i class="fa-solid fa-thumbtack"></i></button>` : '';
+  const delAct = canDelete ? `<button class="chat-act-btn" title="Delete" onclick="deleteForumPost(${msg.id}, ${ctx.isTop ? 'true' : 'false'}, ${ctx.parentId || 'null'})"><i class="fa-solid fa-trash"></i></button>` : '';
+  const actions = (pinAct || delAct) ? `<div class="chat-actions">${pinAct}${delAct}</div>` : '';
+  // Top-of-list (channel feed) shows the bubble + an explicit "View replies" link
+  let threadLink = '';
+  if (ctx.feedMode) {
+    const count = msg.reply_count || 0;
+    threadLink = `<button class="chat-thread-link" onclick="navigate('forum-thread',{id:${msg.id}})"><i class="fa-solid fa-comment-dots"></i> ${count === 0 ? 'Reply in thread' : (count + ' repl' + (count === 1 ? 'y' : 'ies'))}</button>`;
+  }
   return `
-    <div class="page-header fade-in">
-      <h1>Discussion Forum</h1>
-      <p>Chat with fellow students and your instructors</p>
-    </div>
-    <div class="card slide-up">
-      <div class="card-body">
-        <textarea id="forum-new" class="input" rows="3" placeholder="Start a new conversation…" style="resize:vertical;"></textarea>
-        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="postForumMessage()"><i class="fa-solid fa-paper-plane"></i> Post</button></div>
+    <div class="chat-row ${isMe ? 'me' : ''} ${isStaff && !isMe ? 'staff' : ''}">
+      ${avatar}
+      <div style="min-width:0;">
+        ${meta}
+        <div class="chat-bubble">${escapeHtml(msg.body || '')}${actions}</div>
       </div>
     </div>
-    <div id="forum-list" style="margin-top:14px;"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+    ${threadLink}`;
+}
+
+function _chatStreamHtml(messages, ctx) {
+  if (!messages.length) {
+    return '<div class="chat-empty"><i class="fa-regular fa-comments" style="font-size:36px;color:#c7b9a3;display:block;margin-bottom:10px;"></i>No messages yet — say hi.</div>';
+  }
+  let html = '';
+  let lastDay = '';
+  messages.forEach(m => {
+    const d = new Date(m.created_at);
+    const dayKey = d.toDateString();
+    if (dayKey !== lastDay) {
+      html += `<div class="chat-day-divider">${_chatDayLabel(d)}</div>`;
+      lastDay = dayKey;
+    }
+    html += _chatBubble(m, ctx);
+  });
+  return html;
+}
+
+function _scrollChatToBottom() {
+  const s = document.getElementById('chat-stream');
+  if (s) s.scrollTop = s.scrollHeight;
+}
+
+// Renders the chat shell once; subsequent loads update the stream only.
+function _renderChatShell({ title, subtitle, composerPlaceholder, onSend, threadBack, pinned }) {
+  _ensureChatStyles();
+  const pinHtml = pinned ? `<div class="chat-pin-banner"><i class="fa-solid fa-thumbtack"></i><div><div style="font-weight:600;margin-bottom:2px;">Pinned</div>${escapeHtml(pinned.body || '').slice(0,200)}${(pinned.body||'').length > 200 ? '…' : ''}</div></div>` : '';
+  const backBtn = threadBack ? `<button class="chat-thread-back" onclick="navigate('forum');return false;"><i class="fa-solid fa-chevron-left"></i> Back to channel</button>` : '';
+  return `
+    <div class="chat-shell fade-in">
+      <div class="chat-header">
+        ${backBtn}
+        <div style="flex:1;min-width:0;">
+          <h2><i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i> ${escapeHtml(title)}</h2>
+          <div class="chat-sub">${escapeHtml(subtitle || '')}</div>
+        </div>
+      </div>
+      ${pinHtml}
+      <div class="chat-stream" id="chat-stream"><div class="chat-empty">Loading…</div></div>
+      <div class="chat-composer">
+        <textarea id="chat-input" rows="1" placeholder="${escapeAttr(composerPlaceholder || 'Type a message…')}" oninput="_chatAutoGrow(this)" onkeydown="_chatKeydown(event, ${onSend})"></textarea>
+        <button class="chat-send" id="chat-send-btn" onclick="(${onSend})()" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+    </div>`;
+}
+
+function _chatAutoGrow(t) {
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 140) + 'px';
+}
+window._chatAutoGrow = _chatAutoGrow;
+
+function _chatKeydown(e, sendFn) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (typeof sendFn === 'function') sendFn();
+  }
+}
+window._chatKeydown = _chatKeydown;
+
+// ----- Channel feed (top level) ---------------------------------------------
+function renderForumList() {
+  setTimeout(loadForumPosts, 0);
+  return _renderChatShell({
+    title: 'Community Channel',
+    subtitle: 'Chat with fellow students and your instructors',
+    composerPlaceholder: 'Message the channel…',
+    onSend: 'postForumMessage'
+  });
 }
 
 async function loadForumPosts() {
   const posts = await apiCall('/api/forum/posts') || [];
-  const target = document.getElementById('forum-list');
-  if (!target) return;
-  if (posts.length === 0) {
-    target.innerHTML = '<div class="card"><div class="card-body text-center text-muted">No conversations yet. Be the first to post.</div></div>';
-    return;
-  }
-  let html = '';
-  posts.forEach(p => {
-    const isStaff = p.author_role === 'admin';
-    const pinned = p.is_pinned ? '<i class="fa-solid fa-thumbtack" style="color:var(--terracotta);margin-right:6px;"></i>' : '';
-    html += `
-      <div class="card" style="margin-bottom:10px;cursor:pointer;" onclick="navigate('forum-thread',{id:${p.id}})">
-        <div class="card-body">
-          <div class="text-muted text-sm" style="margin-bottom:6px;">
-            ${pinned}<strong>${escapeHtml(p.author_name || 'User')}</strong>
-            ${isStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
-            • ${new Date(p.created_at).toLocaleString()}
-          </div>
-          <div style="white-space:pre-wrap;">${escapeHtml((p.body || '').slice(0, 280))}${(p.body || '').length > 280 ? '…' : ''}</div>
-          <div class="text-muted text-sm" style="margin-top:8px;"><i class="fa-solid fa-comment"></i> ${p.reply_count || 0} repl${p.reply_count === 1 ? 'y' : 'ies'}</div>
-        </div>
-      </div>`;
-  });
-  target.innerHTML = html;
+  const stream = document.getElementById('chat-stream');
+  if (!stream) return;
+  // Backend returns newest-first; chat feels right with oldest-first chronological.
+  const ordered = [...posts].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+  stream.innerHTML = _chatStreamHtml(ordered, { feedMode: true, isTop: true });
+  _scrollChatToBottom();
 }
 
 async function postForumMessage() {
-  const body = (document.getElementById('forum-new')?.value || '').trim();
-  if (!body) { alert('Type a message first.'); return; }
+  const input = document.getElementById('chat-input');
+  const body = (input?.value || '').trim();
+  if (!body) return;
+  const btn = document.getElementById('chat-send-btn');
+  if (btn) btn.disabled = true;
   const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body }) });
+  if (btn) btn.disabled = false;
   if (out) {
-    document.getElementById('forum-new').value = '';
-    loadForumPosts();
-  } else alert('Could not post.');
+    if (input) { input.value = ''; _chatAutoGrow(input); input.focus(); }
+    // Reload to pick up the new message (whichever channel/thread we're in)
+    if (document.querySelector('.chat-thread-back')) {
+      const id = APP.viewParams?.id;
+      if (id) loadForumThread(id);
+    } else {
+      loadForumPosts();
+    }
+  } else {
+    alert('Could not post.');
+  }
 }
 
+// ----- Single thread (replies) ----------------------------------------------
 function renderForumThread() {
   const id = APP.viewParams?.id;
   setTimeout(() => loadForumThread(id), 0);
-  return `
-    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('forum');return false;">Discussion Forum</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Thread</span></div>
-    <div id="forum-thread"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+  return _renderChatShell({
+    title: 'Thread',
+    subtitle: 'Reply to this conversation',
+    composerPlaceholder: 'Reply to the thread…',
+    onSend: `(() => replyForumThread(${id}))`,
+    threadBack: true
+  });
 }
 
 async function loadForumThread(id) {
   const data = await apiCall(`/api/forum/posts/${id}`);
-  const target = document.getElementById('forum-thread');
-  if (!target || !data) return;
-  const p = data.post;
-  const isStaff = p.author_role === 'admin';
-  const isAdmin = APP.currentUser?.isAdmin;
-  const canDeleteTop = isAdmin || p.user_id === APP.currentUser?.id;
-  let html = `
-    <div class="card slide-up">
-      <div class="card-body">
-        <div class="text-muted text-sm" style="margin-bottom:8px;">
-          <strong>${escapeHtml(p.author_name || 'User')}</strong>
-          ${isStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
-          • ${new Date(p.created_at).toLocaleString()}
-          ${canDeleteTop ? `<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="deleteForumPost(${p.id}, true)"><i class="fa-solid fa-trash"></i></button>` : ''}
-          ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="toggleForumPin(${p.id}, ${!p.is_pinned})">${p.is_pinned ? 'Unpin' : 'Pin'}</button>` : ''}
-        </div>
-        <div style="white-space:pre-wrap;">${escapeHtml(p.body)}</div>
-      </div>
-    </div>`;
-  (data.replies || []).forEach(r => {
-    const rIsStaff = r.author_role === 'admin';
-    const canDelete = isAdmin || r.user_id === APP.currentUser?.id;
-    html += `
-      <div class="card" style="margin-top:10px;${rIsStaff ? 'border-left:4px solid var(--terracotta);' : ''}">
-        <div class="card-body">
-          <div class="text-muted text-sm" style="margin-bottom:6px;">
-            <strong>${escapeHtml(r.author_name || 'User')}</strong>
-            ${rIsStaff ? '<span class="badge badge-complete" style="margin-left:6px;">Staff</span>' : ''}
-            • ${new Date(r.created_at).toLocaleString()}
-            ${canDelete ? `<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="deleteForumPost(${r.id}, false, ${p.id})"><i class="fa-solid fa-trash"></i></button>` : ''}
-          </div>
-          <div style="white-space:pre-wrap;">${escapeHtml(r.body)}</div>
-        </div>
-      </div>`;
-  });
-  html += `
-    <div class="card" style="margin-top:14px;">
-      <div class="card-body">
-        <textarea id="forum-reply" class="input" rows="3" placeholder="Reply to the thread…" style="resize:vertical;"></textarea>
-        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="replyForumThread(${p.id})"><i class="fa-solid fa-paper-plane"></i> Reply</button></div>
-      </div>
-    </div>`;
-  target.innerHTML = html;
+  const stream = document.getElementById('chat-stream');
+  if (!stream || !data) return;
+  const top = data.post;
+  const replies = data.replies || [];
+  // Update header text/back button
+  const header = document.querySelector('.chat-header h2');
+  if (header) header.innerHTML = `<i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i> ${escapeHtml((top.body || 'Thread').split('\n')[0].slice(0, 60))}${(top.body||'').length > 60 ? '…' : ''}`;
+  const sub = document.querySelector('.chat-header .chat-sub');
+  if (sub) sub.textContent = `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'} • Started by ${top.author_name || 'User'}`;
+  // Render the top post + replies in one chronological stream
+  const all = [top, ...replies].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+  let html = _chatStreamHtml(all, { threadMode: true, isTop: false, parentId: top.id });
+  // Pin banner if pinned
+  let pinBanner = document.querySelector('.chat-pin-banner');
+  if (top.is_pinned && !pinBanner) {
+    pinBanner = document.createElement('div');
+    pinBanner.className = 'chat-pin-banner';
+    pinBanner.innerHTML = `<i class="fa-solid fa-thumbtack"></i><div><div style="font-weight:600;margin-bottom:2px;">Pinned by staff</div>${escapeHtml((top.body || '').slice(0, 200))}${(top.body||'').length > 200 ? '…' : ''}</div>`;
+    document.querySelector('.chat-header').after(pinBanner);
+  } else if (!top.is_pinned && pinBanner) {
+    pinBanner.remove();
+  }
+  stream.innerHTML = html;
+  _scrollChatToBottom();
 }
 
 async function replyForumThread(parentId) {
-  const body = (document.getElementById('forum-reply')?.value || '').trim();
+  const input = document.getElementById('chat-input');
+  const body = (input?.value || '').trim();
   if (!body) return;
   const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body, parent_id: parentId }) });
-  if (out) loadForumThread(parentId);
+  if (out) {
+    if (input) { input.value = ''; _chatAutoGrow(input); input.focus(); }
+    loadForumThread(parentId);
+  }
 }
 
 async function deleteForumPost(id, isTop, parentId) {
-  if (!confirm('Delete this post?')) return;
+  if (!confirm('Delete this message?')) return;
   await apiCall(`/api/forum/posts/${id}`, { method: 'DELETE' });
-  if (isTop) navigate(APP.currentUser?.isAdmin ? 'admin' : 'forum', APP.currentUser?.isAdmin ? { view: 'forum' } : {});
-  else loadForumThread(parentId);
+  if (isTop) {
+    navigate(APP.currentUser?.isAdmin ? 'admin' : 'forum', APP.currentUser?.isAdmin ? { view: 'forum' } : {});
+  } else if (parentId) {
+    loadForumThread(parentId);
+  } else {
+    loadForumPosts();
+  }
 }
 
 async function toggleForumPin(id, pin) {
   await apiCall(`/api/admin/forum/posts/${id}`, { method: 'PUT', body: JSON.stringify({ is_pinned: pin }) });
-  loadForumThread(id);
+  // If we're in the thread of this post, reload that; otherwise reload the feed.
+  if (APP.view === 'forum-thread' && APP.viewParams?.id === id) loadForumThread(id);
+  else loadForumPosts();
 }
 
 function renderAdminForum() {
-  // Admins use the same forum UI
   setTimeout(loadForumPosts, 0);
-  return `
-    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Discussion Forum</span></div>
-    <div class="page-header"><h1>Discussion Forum</h1><p>Moderate the student community — pin important threads or remove posts</p></div>
-    <div class="card slide-up">
-      <div class="card-body">
-        <textarea id="forum-new" class="input" rows="3" placeholder="Post an announcement or start a discussion…" style="resize:vertical;"></textarea>
-        <div style="margin-top:8px;"><button class="btn btn-primary" onclick="postForumMessage()"><i class="fa-solid fa-paper-plane"></i> Post</button></div>
-      </div>
-    </div>
-    <div id="forum-list" style="margin-top:14px;"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+  return _renderChatShell({
+    title: 'Community Channel (admin)',
+    subtitle: 'Moderate the student chat — pin or remove messages',
+    composerPlaceholder: 'Post an announcement or message the channel…',
+    onSend: 'postForumMessage'
+  });
 }
 
 // =============================================================================
@@ -6137,4 +6284,298 @@ async function loadAdminHomeworkInbox() {
     return html;
   };
   renderAdminContent = window.renderAdminContent;
+})();
+
+// ============================================================================
+// ===== NOTIFICATIONS (dashboard bell + banner) ==============================
+// ============================================================================
+// Polls the backend for new notifications, shows a banner on the dashboard
+// for unread items, and adds a bell icon in the page header.
+
+(function () {
+  const NUMA_NOTIF = window.NUMA_NOTIF = window.NUMA_NOTIF || {
+    items: [],
+    unread: 0,
+    lastFetched: 0,
+    polling: null
+  };
+
+  function _typeIcon(t) {
+    switch (t) {
+      case 'homework_feedback': return 'fa-clipboard-check';
+      case 'homework_comment':  return 'fa-comment-dots';
+      case 'scenario_assigned': return 'fa-briefcase-medical';
+      case 'scenario_graded':   return 'fa-award';
+      case 'forum_message':     return 'fa-comments';
+      default:                  return 'fa-bell';
+    }
+  }
+  function _timeAgo(iso) {
+    const d = new Date(iso); const now = new Date(); const s = Math.floor((now - d) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return d.toLocaleDateString();
+  }
+
+  function _ensureNotifStyles() {
+    if (document.getElementById('numa-notif-styles')) return;
+    const el = document.createElement('style');
+    el.id = 'numa-notif-styles';
+    el.textContent = `
+      .numa-bell{position:relative;display:inline-flex;align-items:center;justify-content:center;
+        width:38px;height:38px;border-radius:50%;background:#fff;border:1px solid #e6dfd1;cursor:pointer;
+        color:#5a4a36;margin-left:8px;flex-shrink:0;}
+      .numa-bell:hover{background:#fafaf7;border-color:#d6c8b3;}
+      .numa-bell .dot{position:absolute;top:6px;right:6px;min-width:18px;height:18px;padding:0 5px;
+        border-radius:9px;background:#c0392b;color:#fff;font-size:11px;font-weight:700;display:flex;
+        align-items:center;justify-content:center;}
+      .numa-notif-panel{position:fixed;top:64px;right:24px;width:360px;max-width:calc(100vw - 32px);
+        max-height:70vh;overflow-y:auto;background:#fff;border:1px solid #e6dfd1;border-radius:14px;
+        box-shadow:0 10px 30px rgba(0,0,0,.12);z-index:9999;display:none;}
+      .numa-notif-panel.open{display:block;}
+      .numa-notif-header{padding:12px 14px;border-bottom:1px solid #f0e8d8;display:flex;
+        align-items:center;justify-content:space-between;background:#fafaf7;border-radius:14px 14px 0 0;}
+      .numa-notif-header h3{margin:0;font-size:15px;color:#3b2f24;}
+      .numa-notif-header button{background:transparent;border:0;color:#A38D78;font-size:12px;cursor:pointer;}
+      .numa-notif-empty{padding:36px 16px;text-align:center;color:#8a7a6a;font-size:13px;}
+      .numa-notif-item{display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f5efe2;cursor:pointer;}
+      .numa-notif-item:hover{background:#fafaf7;}
+      .numa-notif-item.unread{background:#fff8ee;}
+      .numa-notif-item.unread:hover{background:#fff3e0;}
+      .numa-notif-item .icon{width:36px;height:36px;border-radius:50%;background:#f3ece0;color:#A38D78;
+        display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;}
+      .numa-notif-item.unread .icon{background:#A38D78;color:#fff;}
+      .numa-notif-item .body{flex:1;min-width:0;}
+      .numa-notif-item .body .title{font-weight:600;font-size:13.5px;color:#3b2f24;margin-bottom:2px;}
+      .numa-notif-item .body .desc{font-size:12.5px;color:#6a5b4a;line-height:1.4;
+        display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+      .numa-notif-item .body .when{font-size:11px;color:#a09080;margin-top:3px;}
+      .numa-notif-dash{margin-bottom:18px;padding:14px 16px;border-radius:12px;background:#fff8ee;
+        border:1px solid #e8d9b8;display:flex;gap:12px;align-items:center;animation:fadeIn .3s ease;}
+      .numa-notif-dash .icon{width:42px;height:42px;border-radius:50%;background:#A38D78;color:#fff;
+        display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px;}
+      .numa-notif-dash .body{flex:1;min-width:0;}
+      .numa-notif-dash .body .title{font-weight:600;color:#3b2f24;margin-bottom:2px;}
+      .numa-notif-dash .body .desc{font-size:13px;color:#6a5b4a;}
+      .numa-notif-dash button{background:#A38D78;color:#fff;border:0;padding:8px 14px;border-radius:8px;
+        font-size:13px;cursor:pointer;flex-shrink:0;}
+      .numa-notif-dash button:hover{background:#8e7967;}
+    `;
+    document.head.appendChild(el);
+  }
+
+  async function fetchNotifications(silent) {
+    try {
+      const data = await apiCall('/api/notifications?limit=30');
+      if (data && Array.isArray(data.items)) {
+        NUMA_NOTIF.items = data.items;
+        NUMA_NOTIF.unread = data.unread_count || 0;
+        NUMA_NOTIF.lastFetched = Date.now();
+        updateBell();
+        if (!silent) renderPanel();
+        renderDashBanner();
+      }
+    } catch (e) { /* silent */ }
+  }
+  window.fetchNotifications = fetchNotifications;
+
+  function updateBell() {
+    const bell = document.getElementById('numa-bell');
+    if (!bell) return;
+    const dot = bell.querySelector('.dot');
+    if (NUMA_NOTIF.unread > 0) {
+      if (!dot) {
+        const d = document.createElement('span');
+        d.className = 'dot';
+        d.textContent = NUMA_NOTIF.unread > 9 ? '9+' : String(NUMA_NOTIF.unread);
+        bell.appendChild(d);
+      } else {
+        dot.textContent = NUMA_NOTIF.unread > 9 ? '9+' : String(NUMA_NOTIF.unread);
+      }
+    } else if (dot) {
+      dot.remove();
+    }
+  }
+
+  function ensureBell() {
+    _ensureNotifStyles();
+    if (document.getElementById('numa-bell')) return;
+    // Mount the bell into the topbar / header area. Try a few selectors.
+    const target = document.querySelector('.topbar-right, .header-right, .navbar-right, .main-header, header')
+                || document.querySelector('.page-header');
+    if (!target) return;
+    const bell = document.createElement('button');
+    bell.id = 'numa-bell';
+    bell.className = 'numa-bell';
+    bell.title = 'Notifications';
+    bell.innerHTML = '<i class="fa-regular fa-bell"></i>';
+    bell.onclick = (e) => { e.stopPropagation(); togglePanel(); };
+    // Position the bell as inline next to the page-header (since we don't have a real topbar)
+    if (target.classList.contains('page-header')) {
+      target.style.display = 'flex';
+      target.style.justifyContent = 'space-between';
+      target.style.alignItems = 'flex-start';
+      target.appendChild(bell);
+    } else {
+      target.appendChild(bell);
+    }
+    updateBell();
+    // Click-outside dismiss
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('numa-notif-panel');
+      if (panel && !panel.contains(e.target) && e.target.id !== 'numa-bell' && !panel.classList.contains('hidden')) {
+        panel.classList.remove('open');
+      }
+    });
+  }
+
+  function togglePanel() {
+    let panel = document.getElementById('numa-notif-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'numa-notif-panel';
+      panel.className = 'numa-notif-panel';
+      document.body.appendChild(panel);
+    }
+    if (panel.classList.contains('open')) {
+      panel.classList.remove('open');
+    } else {
+      renderPanel();
+      panel.classList.add('open');
+    }
+  }
+  window.toggleNotifPanel = togglePanel;
+
+  function renderPanel() {
+    const panel = document.getElementById('numa-notif-panel');
+    if (!panel) return;
+    const items = NUMA_NOTIF.items || [];
+    let body = '';
+    if (items.length === 0) {
+      body = '<div class="numa-notif-empty"><i class="fa-regular fa-bell-slash" style="font-size:28px;color:#c7b9a3;display:block;margin-bottom:8px;"></i>No notifications yet.</div>';
+    } else {
+      body = items.map(n => `
+        <div class="numa-notif-item ${n.is_read ? '' : 'unread'}" onclick="openNotification(${n.id})">
+          <div class="icon"><i class="fa-solid ${_typeIcon(n.type)}"></i></div>
+          <div class="body">
+            <div class="title">${escapeHtml(n.title || '')}</div>
+            ${n.body ? `<div class="desc">${escapeHtml(n.body)}</div>` : ''}
+            <div class="when">${_timeAgo(n.created_at)}</div>
+          </div>
+        </div>`).join('');
+    }
+    panel.innerHTML = `
+      <div class="numa-notif-header">
+        <h3>Notifications${NUMA_NOTIF.unread ? ` <span style="color:#A38D78;">(${NUMA_NOTIF.unread})</span>` : ''}</h3>
+        <button onclick="markAllNotificationsRead()">Mark all read</button>
+      </div>
+      ${body}`;
+  }
+
+  async function openNotification(id) {
+    const n = (NUMA_NOTIF.items || []).find(x => x.id === id);
+    if (!n) return;
+    // Mark as read
+    await apiCall('/api/notifications/mark-read', { method: 'POST', body: JSON.stringify({ ids: [id] }) });
+    n.is_read = true;
+    NUMA_NOTIF.unread = Math.max(0, NUMA_NOTIF.unread - 1);
+    updateBell();
+    renderPanel();
+    // Close panel and navigate
+    const panel = document.getElementById('numa-notif-panel');
+    if (panel) panel.classList.remove('open');
+    if (n.link_view) {
+      try { navigate(n.link_view, n.link_params || {}); }
+      catch (e) { console.warn('nav failed', e); }
+    }
+  }
+  window.openNotification = openNotification;
+
+  async function markAllNotificationsRead() {
+    await apiCall('/api/notifications/mark-read', { method: 'POST', body: JSON.stringify({ all: true }) });
+    NUMA_NOTIF.items.forEach(n => n.is_read = true);
+    NUMA_NOTIF.unread = 0;
+    updateBell();
+    renderPanel();
+    renderDashBanner();
+  }
+  window.markAllNotificationsRead = markAllNotificationsRead;
+
+  // Dashboard banner: shown if user has unread notifications on the dashboard page
+  function renderDashBanner() {
+    // Only on dashboard
+    if (APP.view !== 'dashboard') return;
+    _ensureNotifStyles();
+    const main = document.querySelector('.main-content, .content, main') || document.body;
+    const existing = document.getElementById('numa-notif-banner');
+    if (NUMA_NOTIF.unread === 0) {
+      if (existing) existing.remove();
+      return;
+    }
+    // Find the freshest unread item
+    const top = (NUMA_NOTIF.items || []).find(n => !n.is_read);
+    if (!top) { if (existing) existing.remove(); return; }
+    const html = `
+      <div id="numa-notif-banner" class="numa-notif-dash">
+        <div class="icon"><i class="fa-solid ${_typeIcon(top.type)}"></i></div>
+        <div class="body">
+          <div class="title">${escapeHtml(top.title || '')}${NUMA_NOTIF.unread > 1 ? ` <span style="color:#A38D78;font-weight:500;">+ ${NUMA_NOTIF.unread - 1} more</span>` : ''}</div>
+          ${top.body ? `<div class="desc">${escapeHtml(top.body)}</div>` : ''}
+        </div>
+        <button onclick="openNotification(${top.id})">View</button>
+      </div>`;
+    if (existing) {
+      existing.outerHTML = html;
+    } else {
+      // Insert at the top of the main content area
+      const pageHeader = document.querySelector('.page-header');
+      if (pageHeader && pageHeader.parentNode) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        pageHeader.parentNode.insertBefore(wrap.firstElementChild, pageHeader.nextSibling);
+      } else {
+        main.insertAdjacentHTML('afterbegin', html);
+      }
+    }
+  }
+  window.renderDashBanner = renderDashBanner;
+
+  function startPolling() {
+    if (NUMA_NOTIF.polling) return;
+    NUMA_NOTIF.polling = setInterval(() => fetchNotifications(true), 45000);
+  }
+  function stopPolling() {
+    if (NUMA_NOTIF.polling) { clearInterval(NUMA_NOTIF.polling); NUMA_NOTIF.polling = null; }
+  }
+  window.startNotificationPolling = startPolling;
+  window.stopNotificationPolling = stopPolling;
+
+  // Hook into every render to ensure the bell + banner stay mounted
+  if (typeof window._renderAppOriginal === 'undefined' && typeof renderApp === 'function') {
+    window._renderAppOriginal = renderApp;
+    window.renderApp = function () {
+      const out = window._renderAppOriginal.apply(this, arguments);
+      // After the DOM updates, mount the bell + banner
+      setTimeout(() => {
+        if (APP.currentUser && APP.token) {
+          ensureBell();
+          // Refresh on dashboard view, otherwise rely on poll
+          if (APP.view === 'dashboard') fetchNotifications(false);
+          renderDashBanner();
+          startPolling();
+        }
+      }, 0);
+      return out;
+    };
+  }
+
+  // Kick off an initial fetch on load (after login)
+  setTimeout(() => {
+    if (APP.currentUser && APP.token) {
+      ensureBell();
+      fetchNotifications(false);
+      startPolling();
+    }
+  }, 500);
 })();
