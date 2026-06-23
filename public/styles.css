@@ -935,6 +935,29 @@ button, input, select, textarea {
 .quiz-result .score { font-size: 3rem; font-family: var(--font-heading); font-weight: 700; }
 
 /* --- Hour Logging --- */
+.hour-disclaimer {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #fff8ee;
+  border: 1px solid #e8d9b8;
+  border-left: 4px solid #A38D78;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  color: #5a4a36;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.hour-disclaimer i {
+  color: #A38D78;
+  font-size: 18px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.hour-disclaimer strong { color: #3b2f24; font-weight: 600; }
+.hour-disclaimer em { color: #8e7967; font-style: italic; font-weight: 500; }
+
 .log-form {
   background: var(--white);
   border-radius: var(--radius-lg);

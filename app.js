@@ -916,6 +916,25 @@ function renderHourTabContent(type) {
   const user = APP.currentUser;
   const entries = (user.hourLogs && user.hourLogs[type]) || [];
 
+  // Disclaimers by tab — brand-aligned, calm and informative
+  let disclaimer = '';
+  if (type === 'observation') {
+    disclaimer = `
+      <div class="hour-disclaimer">
+        <i class="fa-solid fa-circle-info"></i>
+        <div><strong>Observation hours must be completed with a NUMA Pilates instructor.</strong> Hours observed at other studios will not count toward your certification.</div>
+      </div>`;
+  } else if (type === 'personal') {
+    disclaimer = `
+      <div class="hour-disclaimer">
+        <i class="fa-solid fa-circle-info"></i>
+        <div>
+          <strong>Practice hours</strong> count for classes taken at NUMA or with any comprehensive-certified instructor. You may ask instructors at other studios for their certification credentials at any time, and NUMA teachers may request verification before signing off on hours that qualify.<br><br>
+          <em>When in doubt, use your 10 free classes at NUMA Pilates.</em>
+        </div>
+      </div>`;
+  }
+
   const fields = type === 'observation' ?
     `<div class="form-row">
       <div class="form-group"><label>Date</label><input type="date" class="form-control" id="log-date"></div>
@@ -936,7 +955,7 @@ function renderHourTabContent(type) {
       <div class="form-group"><label>Hours</label><input type="number" class="form-control" id="log-hours" step="0.5" min="0.5" placeholder="1.0"></div>
     </div>`;
 
-  let html = `<div class="log-form">${fields}
+  let html = `${disclaimer}<div class="log-form">${fields}
     <button class="btn btn-primary" onclick="addHourEntry('${type}')"><i class="fa-solid fa-plus"></i> Add Entry</button>
   </div>`;
 
