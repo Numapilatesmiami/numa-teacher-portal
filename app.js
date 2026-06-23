@@ -5012,22 +5012,39 @@ async function fetchPathways() {
   }
   const r = await apiCall('/api/program-settings');
   const settings = (r && r.settings) || {};
-  const pathways = {
-    mat: settings.pathway_mat || { required_module_ids: [], hour_requirements: null, label: 'Mat Certification' },
-    reformer: settings.pathway_reformer || { required_module_ids: [], hour_requirements: null, label: 'Reformer Certification' },
-    both: settings.pathway_both || { required_module_ids: [], hour_requirements: null, label: 'Mat + Reformer Certification' }
+  // Defaults so built-in tracks always show even if program_settings row is missing
+  const defaults = {
+    mat: { required_module_ids: [], hour_requirements: null, label: 'Mat Certification' },
+    reformer: { required_module_ids: [], hour_requirements: null, label: 'Reformer Certification' },
+    both: { required_module_ids: [], hour_requirements: null, label: 'Mat + Reformer Certification' }
   };
+  const pathways = { ...defaults };
+  // Pick up every program_settings row that starts with pathway_
+  Object.keys(settings).forEach(key => {
+    if (key.indexOf('pathway_') === 0) {
+      const slug = key.slice('pathway_'.length);
+      if (slug) pathways[slug] = settings[key] || {};
+    }
+  });
   NUMA_ENROLL.pathwayCache = pathways;
   NUMA_ENROLL.pathwayAt = Date.now();
   return pathways;
 }
 
+// Built-in track labels; custom tracks supply their own .label in the pathway record
 function trackLabel(track) {
   if (!track) return 'Not assigned';
   if (track === 'mat') return 'Mat Certification';
   if (track === 'reformer') return 'Reformer Certification';
   if (track === 'both') return 'Mat + Reformer';
-  return track;
+  // Fall back to a Title-Cased version of the slug for custom tracks
+  return String(track).replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Resolve a human-readable label for any track slug using the cached pathway record
+function resolveTrackLabel(slug, pathwayRecord) {
+  if (pathwayRecord && pathwayRecord.label) return pathwayRecord.label;
+  return trackLabel(slug);
 }
 
 function tuitionLabel(status) {
@@ -5102,13 +5119,11 @@ function renderEnrollmentCard(student) {
         <h3 style="margin-top:0;"><i class="fa-solid fa-clipboard-user"></i> Enrollment</h3>
         <div class="form-group">
           <label><strong>Program Track</strong></label>
-          <select id="enroll-track" class="form-control">
+          <select id="enroll-track" class="form-control" data-current-track="${escapeAttr(track)}">
             <option value="" ${track === '' ? 'selected' : ''}>— Not assigned —</option>
-            <option value="mat" ${track === 'mat' ? 'selected' : ''}>Mat Certification</option>
-            <option value="reformer" ${track === 'reformer' ? 'selected' : ''}>Reformer Certification</option>
-            <option value="both" ${track === 'both' ? 'selected' : ''}>Mat + Reformer (Both)</option>
+            <option value="${escapeAttr(track || '__loading__')}" selected style="display:none;">${escapeHtml(track ? resolveTrackLabel(track) : 'Loading…')}</option>
           </select>
-          <small class="text-muted">The student sees the modules required for this track. Leave unassigned and they'll see "contact your instructor".</small>
+          <small class="text-muted">The student sees the modules required for this track. Leave unassigned and they'll see "contact your instructor". Manage tracks under <a href="#" onclick="navigate('admin',{view:'pathways'});return false;">Certification Pathways</a>.</small>
         </div>
         <hr>
         <div class="form-group">
@@ -5156,6 +5171,20 @@ function renderEnrollmentCard(student) {
         const target = document.getElementById('enrollment-card-slot');
         if (target && student) {
           target.innerHTML = renderEnrollmentCard(student);
+          // Populate the track dropdown dynamically from all known pathways
+          try {
+            const pathways = await fetchPathways();
+            const sel = document.getElementById('enroll-track');
+            if (sel) {
+              const current = sel.dataset.currentTrack || '';
+              const opts = ['<option value=""' + (current === '' ? ' selected' : '') + '>— Not assigned —</option>'];
+              Object.keys(pathways).sort().forEach(slug => {
+                const lbl = resolveTrackLabel(slug, pathways[slug]);
+                opts.push('<option value="' + escapeAttr(slug) + '"' + (current === slug ? ' selected' : '') + '>' + escapeHtml(lbl) + '</option>');
+              });
+              sel.innerHTML = opts.join('');
+            }
+          } catch (e) { console.warn('[enrollment-tracks]', e); }
         }
       } catch (e) { console.warn('[enrollment]', e); }
     }, 0);
@@ -5273,6 +5302,31 @@ function renderAdminPathways() {
   `;
 }
 
+// Built-in tracks cannot be deleted (only edited / hidden via assignment)
+const NUMA_BUILTIN_TRACKS = ['mat', 'reformer', 'both'];
+
+function pathwayAccentColor(slug) {
+  if (slug === 'mat') return '#8d6e63';
+  if (slug === 'reformer') return '#5d4037';
+  if (slug === 'both') return '#A38D78';
+  // Deterministic warm-tone color for custom tracks
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) & 0xffff;
+  const hue = (h % 40) + 20; // 20–60° (warm brown/amber)
+  return `hsl(${hue}, 28%, 38%)`;
+}
+
+function pathwayIcon(slug) {
+  if (slug === 'mat') return 'border-all';
+  if (slug === 'reformer') return 'compress';
+  if (slug === 'both') return 'layer-group';
+  if (slug.includes('chair')) return 'chair';
+  if (slug.includes('cadillac')) return 'bed';
+  if (slug.includes('barrel')) return 'circle-half-stroke';
+  if (slug.includes('prenatal') || slug.includes('postnatal') || slug.includes('natal')) return 'baby';
+  return 'route';
+}
+
 async function loadPathwaysIntoPage() {
   // Force fresh
   NUMA_ENROLL.pathwayCache = null;
@@ -5280,29 +5334,57 @@ async function loadPathwaysIntoPage() {
   const sorted = [...modules].sort((a, b) => extractFirstWeekNumber(a) - extractFirstWeekNumber(b));
   const target = document.getElementById('pathway-content');
   if (!target) return;
-  target.innerHTML = ['mat', 'reformer', 'both'].map(track => {
-    const p = pathways[track];
+
+  // Order: built-ins first, then custom tracks alphabetically
+  const allSlugs = Object.keys(pathways);
+  const customSlugs = allSlugs.filter(s => !NUMA_BUILTIN_TRACKS.includes(s)).sort();
+  const orderedSlugs = [...NUMA_BUILTIN_TRACKS.filter(s => pathways[s]), ...customSlugs];
+
+  const createBar = `
+    <div class="card mb-3" style="border-left:4px solid #A38D78;background:#faf6f1;">
+      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+        <div>
+          <h3 style="margin:0 0 4px 0;"><i class="fa-solid fa-plus-circle"></i> Add a new certification track</h3>
+          <p class="text-muted text-sm" style="margin:0;">For example: Chair, Cadillac, Barrel, Prenatal, Postnatal.</p>
+        </div>
+        <button class="btn btn-primary" onclick="createNewPathway()"><i class="fa-solid fa-plus"></i> Create New Track</button>
+      </div>
+    </div>`;
+
+  target.innerHTML = createBar + orderedSlugs.map(track => {
+    const p = pathways[track] || {};
     const reqIds = new Set((p.required_module_ids || []).map(String));
     const allRequired = !p.required_module_ids || p.required_module_ids.length === 0;
     const hr = p.hour_requirements || {};
+    const isBuiltin = NUMA_BUILTIN_TRACKS.includes(track);
+    const label = resolveTrackLabel(track, p);
     return `
-      <div class="card mb-3" style="border-left:4px solid ${track === 'mat' ? '#8d6e63' : track === 'reformer' ? '#5d4037' : '#A38D78'};">
+      <div class="card mb-3" style="border-left:4px solid ${pathwayAccentColor(track)};">
         <div class="card-body">
-          <h2 style="margin-top:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <i class="fa-solid fa-${track === 'both' ? 'layer-group' : track === 'reformer' ? 'compress' : 'border-all'}"></i>
-            ${escapeHtml(p.label || trackLabel(track))}
-          </h2>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+            <h2 style="margin-top:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <i class="fa-solid fa-${pathwayIcon(track)}"></i>
+              ${escapeHtml(label)}
+              <span class="text-muted" style="font-size:12px;font-weight:400;">(${escapeHtml(track)})</span>
+              ${isBuiltin ? '<span style="font-size:11px;background:#efe9e0;color:#6b5b48;padding:3px 8px;border-radius:10px;">built-in</span>' : '<span style="font-size:11px;background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:10px;">custom</span>'}
+            </h2>
+            ${isBuiltin ? '' : `<button class="btn btn-secondary" onclick="deletePathwayConfirm('${escapeAttr(track)}','${escapeAttr(label)}')" style="background:#c62828;color:#fff;border-color:#c62828;"><i class="fa-solid fa-trash"></i> Delete Track</button>`}
+          </div>
+          <div class="form-group" style="max-width:480px;">
+            <label><strong>Display name</strong></label>
+            <input type="text" class="form-control pathway-label" data-track="${escapeAttr(track)}" value="${escapeAttr(label)}">
+          </div>
           <div style="margin-bottom:10px;">
             <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
-              <input type="checkbox" id="pathway-${track}-all" ${allRequired ? 'checked' : ''} onchange="togglePathwayAllModules('${track}', this.checked)">
+              <input type="checkbox" id="pathway-${escapeAttr(track)}-all" ${allRequired ? 'checked' : ''} onchange="togglePathwayAllModules('${escapeAttr(track)}', this.checked)">
               <span><strong>All modules required</strong> (uncheck to pick specific modules)</span>
             </label>
           </div>
-          <div id="pathway-${track}-modules" style="display:${allRequired ? 'none' : 'block'};border:1px solid var(--cream-darker);border-radius:8px;padding:12px;margin-bottom:14px;background:#fafafa;">
+          <div id="pathway-${escapeAttr(track)}-modules" style="display:${allRequired ? 'none' : 'block'};border:1px solid var(--cream-darker);border-radius:8px;padding:12px;margin-bottom:14px;background:#fafafa;">
             ${sorted.map(m => {
               const checked = reqIds.has(String(m.id));
               return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">
-                <input type="checkbox" data-track="${track}" data-mod="${escapeAttr(m.id)}" class="pathway-mod-checkbox" ${checked ? 'checked' : ''}>
+                <input type="checkbox" data-track="${escapeAttr(track)}" data-mod="${escapeAttr(m.id)}" class="pathway-mod-checkbox" ${checked ? 'checked' : ''}>
                 <strong>Module ${escapeHtml(String(m.id))}:</strong> ${escapeHtml(m.title || '')}
                 <span class="text-muted" style="font-size:12px;margin-left:auto;">${escapeHtml(m.week || m.subtitle || '')}</span>
               </label>`;
@@ -5311,18 +5393,72 @@ async function loadPathwaysIntoPage() {
           <h4 style="margin-bottom:6px;">Hour Requirements (this track only)</h4>
           <p class="text-muted text-sm" style="margin-top:0;">Leave any field blank to use the global default from Program Settings.</p>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px;">
-            <label>Observation<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="observation" value="${hr.observation ?? ''}"></label>
-            <label>Teaching<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="teaching" value="${hr.teaching ?? ''}"></label>
-            <label>Personal<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="personal" value="${hr.personal ?? ''}"></label>
-            <label>Total<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="total" value="${hr.total ?? ''}"></label>
+            <label>Observation<input type="number" min="0" class="form-control pathway-hr" data-track="${escapeAttr(track)}" data-field="observation" value="${hr.observation ?? ''}"></label>
+            <label>Teaching<input type="number" min="0" class="form-control pathway-hr" data-track="${escapeAttr(track)}" data-field="teaching" value="${hr.teaching ?? ''}"></label>
+            <label>Personal<input type="number" min="0" class="form-control pathway-hr" data-track="${escapeAttr(track)}" data-field="personal" value="${hr.personal ?? ''}"></label>
+            <label>Total<input type="number" min="0" class="form-control pathway-hr" data-track="${escapeAttr(track)}" data-field="total" value="${hr.total ?? ''}"></label>
           </div>
-          <button class="btn btn-primary" onclick="savePathway('${track}')"><i class="fa-solid fa-floppy-disk"></i> Save ${escapeHtml(trackLabel(track))} Pathway</button>
-          <span id="pathway-${track}-status" class="text-muted text-sm" style="margin-left:10px;"></span>
+          <button class="btn btn-primary" onclick="savePathway('${escapeAttr(track)}')"><i class="fa-solid fa-floppy-disk"></i> Save Pathway</button>
+          <span id="pathway-${escapeAttr(track)}-status" class="text-muted text-sm" style="margin-left:10px;"></span>
         </div>
       </div>
     `;
   }).join('');
 }
+
+// Slugify a label into a safe track key: lowercase, a-z0-9 + underscores
+function slugifyTrack(s) {
+  return String(s || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+}
+
+async function createNewPathway() {
+  const label = prompt('Name of the new certification track\n(e.g. "Chair Certification", "Prenatal Pilates")');
+  if (!label) return;
+  const trimmed = label.trim();
+  if (!trimmed) return;
+  let slug = slugifyTrack(trimmed);
+  if (!slug) { alert('Please use letters or numbers in the name.'); return; }
+  const customSlug = prompt('Short slug (used internally, lowercase letters/numbers/underscores).\nLeave as is or shorten:', slug);
+  if (customSlug === null) return;
+  slug = slugifyTrack(customSlug);
+  if (!slug) { alert('Invalid slug.'); return; }
+  const r = await apiCall('/api/admin/pathways', {
+    method: 'POST',
+    body: JSON.stringify({ slug, label: trimmed })
+  });
+  if (r && !r.error) {
+    NUMA_ENROLL.pathwayCache = null;
+    await loadPathwaysIntoPage();
+  } else {
+    alert('Could not create track: ' + ((r && r.error) || 'unknown error'));
+  }
+}
+window.createNewPathway = createNewPathway;
+
+async function deletePathwayConfirm(slug, label) {
+  if (NUMA_BUILTIN_TRACKS.includes(slug)) {
+    alert('Built-in tracks (mat, reformer, both) cannot be deleted.');
+    return;
+  }
+  if (!confirm(`Delete the "${label}" track?\n\nIf any students are assigned to it, you'll be asked again before they are unassigned.`)) return;
+  let r = await apiCall(`/api/admin/pathways/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  if (r && r.error && r.assigned_count) {
+    const cnt = r.assigned_count;
+    if (!confirm(`${cnt} student${cnt === 1 ? ' is' : 's are'} currently assigned to "${label}". Continue and unassign them?`)) return;
+    r = await apiCall(`/api/admin/pathways/${encodeURIComponent(slug)}?force=true`, { method: 'DELETE' });
+  }
+  if (r && !r.error) {
+    NUMA_ENROLL.pathwayCache = null;
+    NUMA_ENROLL.studentListCache = null;
+    await loadPathwaysIntoPage();
+  } else {
+    alert('Delete failed: ' + ((r && r.error) || 'unknown error'));
+  }
+}
+window.deletePathwayConfirm = deletePathwayConfirm;
 
 function togglePathwayAllModules(track, isAll) {
   const box = document.getElementById(`pathway-${track}-modules`);
@@ -5345,12 +5481,15 @@ async function savePathway(track) {
     const v = inp.value.trim();
     if (v !== '') hr[inp.dataset.field] = parseFloat(v);
   });
+  // Pull the (possibly edited) label from the page
+  const labelInput = document.querySelector(`.pathway-label[data-track="${track}"]`);
+  const labelValue = (labelInput && labelInput.value.trim()) || trackLabel(track);
   const value = {
     required_module_ids: requiredIds,
     hour_requirements: Object.keys(hr).length ? hr : null,
     requires_final_exam: true,
     requires_scenarios: true,
-    label: trackLabel(track)
+    label: labelValue
   };
   const r = await apiCall(`/api/admin/program-settings/pathway_${track}`, {
     method: 'PUT',
@@ -5382,7 +5521,7 @@ window.savePathway = savePathway;
       card.onclick = () => navigate('admin', { view: 'pathways' });
       card.innerHTML = '<div class="admin-overview-icon"><i class="fa-solid fa-route"></i></div>'
         + '<h3>Certification Pathways</h3>'
-        + '<p>Set required modules and hours for Mat / Reformer / Both</p>';
+        + '<p>Add, edit, or remove certification tracks (Mat, Reformer, Chair, Cadillac, prenatal, etc.)</p>';
       grid.appendChild(card);
     }, 0);
     return html;

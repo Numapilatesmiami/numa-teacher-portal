@@ -359,10 +359,18 @@ app.get('/api/admin/students', adminRequired, async (_req, res) => {
 // Admin: update enrollment metadata for one student
 app.patch('/api/admin/students/:id', adminRequired, async (req, res) => {
   const { program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes, full_name, email } = req.body || {};
-  // Validate program_track if provided
-  const validTracks = ['mat', 'reformer', 'both', null, ''];
-  if (program_track !== undefined && !validTracks.includes(program_track)) {
-    return res.status(400).json({ error: 'Invalid program_track; must be one of: mat, reformer, both, or null' });
+  // Validate program_track if provided. Tracks live as 'pathway_<track>' rows
+  // in program_settings, so we accept any track that has a pathway row, plus
+  // null/empty to unassign.
+  if (program_track !== undefined && program_track !== null && program_track !== '') {
+    const slug = String(program_track).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (slug !== program_track) {
+      return res.status(400).json({ error: 'program_track must be lowercase letters, digits, hyphens, or underscores' });
+    }
+    const trackRow = await pool.query(`SELECT 1 FROM program_settings WHERE key = $1`, [`pathway_${slug}`]);
+    if (trackRow.rowCount === 0) {
+      return res.status(400).json({ error: `Unknown program_track '${program_track}'. Create the pathway first in Certification Pathways.` });
+    }
   }
   const validStatuses = ['unpaid', 'partial', 'paid', null, ''];
   if (tuition_status !== undefined && !validStatuses.includes(tuition_status)) {
@@ -642,6 +650,58 @@ app.get('/api/sections/:sectionId/quiz', authRequired, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load quiz' });
+  }
+});
+
+// Admin: create a new certification pathway (track)
+app.post('/api/admin/pathways', adminRequired, async (req, res) => {
+  try {
+    const { slug, label } = req.body || {};
+    if (!slug || !label) return res.status(400).json({ error: 'slug and label are required' });
+    const cleanSlug = String(slug).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!cleanSlug) return res.status(400).json({ error: 'slug must contain lowercase letters, digits, hyphens, or underscores' });
+    const key = `pathway_${cleanSlug}`;
+    const exists = await pool.query('SELECT 1 FROM program_settings WHERE key = $1', [key]);
+    if (exists.rowCount > 0) return res.status(409).json({ error: 'A track with that slug already exists' });
+    await pool.query(
+      `INSERT INTO program_settings (key, value, updated_by) VALUES ($1, $2::jsonb, $3)`,
+      [key, JSON.stringify({
+        required_module_ids: [],
+        hour_requirements: null,
+        requires_final_exam: true,
+        requires_scenarios: true,
+        label: String(label)
+      }), req.user.id]
+    );
+    res.json({ ok: true, slug: cleanSlug, label });
+  } catch (e) {
+    console.error('POST pathways error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: delete a certification pathway (track)
+app.delete('/api/admin/pathways/:slug', adminRequired, async (req, res) => {
+  try {
+    const slug = String(req.params.slug).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
+    // Check if any students are assigned to this track
+    const assigned = await pool.query('SELECT COUNT(*) AS n FROM users WHERE program_track = $1', [slug]);
+    const n = parseInt(assigned.rows[0].n, 10);
+    if (n > 0 && req.query.force !== 'true') {
+      return res.status(409).json({
+        error: `${n} student(s) are assigned to this track. Re-assign them first, or pass ?force=true to unassign and delete.`,
+        assigned_count: n
+      });
+    }
+    if (n > 0) {
+      await pool.query('UPDATE users SET program_track = NULL WHERE program_track = $1', [slug]);
+    }
+    await pool.query('DELETE FROM program_settings WHERE key = $1', [`pathway_${slug}`]);
+    res.json({ ok: true, unassigned: n });
+  } catch (e) {
+    console.error('DELETE pathways error', e);
+    res.status(500).json({ error: e.message });
   }
 });
 
