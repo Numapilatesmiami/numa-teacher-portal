@@ -167,6 +167,13 @@ app.get('/api/modules', async (_req, res) => {
   res.json(result.rows);
 });
 
+// Admin-only: return ALL modules including drafts/unpublished. Used by the
+// Course Content Manager so admins can find and re-publish hidden modules.
+app.get('/api/admin/modules-all', adminRequired, async (_req, res) => {
+  const result = await pool.query('SELECT * FROM modules ORDER BY sort_order, id');
+  res.json(result.rows);
+});
+
 app.get('/api/modules/:id', async (req, res) => {
   const modRes = await pool.query('SELECT * FROM modules WHERE id = $1', [req.params.id]);
   if (modRes.rowCount === 0) return res.status(404).json({ error: 'Module not found' });
@@ -601,6 +608,21 @@ app.get('/api/sections/:sectionId/quiz', authRequired, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load quiz' });
+  }
+});
+
+// Admin: lightweight list of which sections have a quiz (for UI badges)
+app.get('/api/admin/section-quizzes-summary', adminRequired, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT section_id, title, passing_score, is_optional,
+              jsonb_array_length(COALESCE(questions, '[]'::jsonb)) AS question_count
+         FROM section_quizzes`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load summary' });
   }
 });
 

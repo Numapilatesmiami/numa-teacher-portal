@@ -2405,9 +2405,13 @@ function renderSortableSections(m, container) {
     <div id="reorder-status" style="margin-top:10px;"></div>
   `;
   attachSortableHandlers(m.id);
+  // Async: decorate each row with a 'has quiz' badge
+  hydrateSectionQuizBadges().catch(e => console.warn('[quiz badges]', e));
 }
 
 function sortableSectionRow(s, idx, total, moduleId) {
+  // Quiz badge: filled in by hydrateSectionQuizBadges() after render
+  const sid = String(s.id);
   return `
     <div class="sortable-row" draggable="true" data-section-id="${escapeAttr(s.id)}" data-module-id="${escapeAttr(moduleId)}"
          style="padding:12px;border:1px solid var(--cream-darker);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;cursor:move;transition:all 0.15s;">
@@ -2415,16 +2419,42 @@ function sortableSectionRow(s, idx, total, moduleId) {
       <div class="section-index" style="width:28px;height:28px;border-radius:50%;background:var(--terracotta);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:0.85rem;flex-shrink:0;">${idx + 1}</div>
       <div style="flex:1;min-width:200px;">
         <strong>${escapeHtml(s.title)}</strong>
-        <div class="text-muted" style="font-size:0.8rem;">${(s.content || '').length} characters</div>
+        <div class="text-muted" style="font-size:0.8rem;">
+          ${(s.content || '').length} characters
+          <span class="section-quiz-badge" data-section-id="${escapeAttr(sid)}" style="margin-left:8px;"></span>
+        </div>
       </div>
-      <div style="display:flex;gap:4px;">
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" onclick="moveSectionArrow('${escapeAttr(moduleId)}','${escapeAttr(s.id)}',-1)" ${idx === 0 ? 'disabled style="opacity:0.3;"' : ''} title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
         <button class="btn btn-ghost btn-sm" onclick="moveSectionArrow('${escapeAttr(moduleId)}','${escapeAttr(s.id)}',1)" ${idx === total - 1 ? 'disabled style="opacity:0.3;"' : ''} title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
         <button class="btn btn-secondary btn-sm" onclick="navigate('admin',{view:'editSection',moduleId:'${escapeAttr(moduleId)}',sectionId:'${escapeAttr(s.id)}'})"><i class="fa-solid fa-pen"></i> Edit</button>
+        <button class="btn btn-secondary btn-sm" onclick="navigate('admin',{view:'section-quiz',moduleId:'${escapeAttr(moduleId)}',sectionId:'${escapeAttr(s.id)}'})" title="Add or edit the quiz at the end of this section"><i class="fa-solid fa-circle-question"></i> Quiz</button>
         <button class="btn btn-secondary btn-sm" onclick="deleteSectionConfirm('${escapeAttr(s.id)}','${escapeAttr(s.title)}','${escapeAttr(moduleId)}')"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>
   `;
+}
+
+// Decorate section rows with a 'Has quiz' / 'No quiz' badge
+async function hydrateSectionQuizBadges() {
+  if (!API_BASE) return;
+  const summary = await apiCall('/api/admin/section-quizzes-summary');
+  const map = {};
+  if (Array.isArray(summary)) {
+    summary.forEach(s => { map[String(s.section_id)] = s; });
+  }
+  document.querySelectorAll('.section-quiz-badge').forEach(el => {
+    const sid = el.getAttribute('data-section-id');
+    const q = map[sid];
+    if (q && q.question_count > 0) {
+      const required = q.is_optional === false;
+      const color = required ? '#2e7d32' : '#8d6e63';
+      const label = required ? 'Required quiz' : 'Optional quiz';
+      el.innerHTML = `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${color};color:#fff;font-size:11px;font-weight:600;"><i class="fa-solid fa-circle-check"></i> ${label} \u00b7 ${q.question_count} Q</span>`;
+    } else {
+      el.innerHTML = `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:#eee;color:#777;font-size:11px;">No quiz yet</span>`;
+    }
+  });
 }
 
 function attachSortableHandlers(moduleId) {
@@ -2620,8 +2650,9 @@ function renderSectionEditor(moduleId, sectionId) {
       <h1><i class="fa-solid fa-${isNew ? 'plus' : 'pen'}"></i> ${isNew ? 'New Section' : 'Edit Section'}</h1>
       <p>Module ${escapeHtml(moduleId)}</p>
     </div>
-    <div style="margin-bottom:20px;">
+    <div style="margin-bottom:20px;display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-secondary" onclick="navigate('admin',{view:'editModule',moduleId:'${moduleId}'})"><i class="fa-solid fa-arrow-left"></i> Back to Module</button>
+      ${isNew ? '' : `<button class="btn btn-primary" onclick="navigate('admin',{view:'section-quiz',moduleId:'${moduleId}',sectionId:'${sectionId}'})"><i class="fa-solid fa-circle-question"></i> Edit End-of-Section Quiz</button>`}
     </div>
 
     <div class="card slide-up"><div class="card-body">
@@ -3577,7 +3608,7 @@ function renderAdminSectionQuizEditor() {
   setTimeout(() => loadSectionQuizForEdit(sectionId), 0);
   return `
     <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin',{view:'modules'});return false;">Course Content</a> <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i> <span>Section Quiz</span></div>
-    <div class="page-header"><h1>Section Quiz Editor</h1><p>Optional quiz attached to one section. Students see it after reading the section.</p></div>
+    <div class="page-header"><h1>End-of-Section Quiz</h1><p>This quiz appears right after a student finishes reading this one section. Leave blank for sections that don't need a quiz; use the end-of-module quiz instead.</p></div>
     <div id="sq-editor" data-section="${sectionId}" data-module="${moduleId}"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
 }
 
@@ -3623,8 +3654,8 @@ function renderSectionQuizEditorBody(sectionId, quiz) {
           <label class="text-sm" style="flex:1;min-width:140px;">Time Limit (minutes, optional)
             <input id="sq-time" type="number" class="input" min="0" value="${quiz.time_limit_minutes || ''}">
           </label>
-          <label class="text-sm" style="display:flex;align-items:center;gap:6px;margin-top:18px;">
-            <input id="sq-optional" type="checkbox" ${quiz.is_optional !== false ? 'checked' : ''}> Optional (students may skip)
+          <label class="text-sm" style="display:flex;align-items:center;gap:6px;margin-top:18px;" title="If checked, students can read the section without taking the quiz. Uncheck to make passing the quiz required before moving on.">
+            <input id="sq-optional" type="checkbox" ${quiz.is_optional !== false ? 'checked' : ''}> Optional (students may skip this quiz)
           </label>
         </div>
       </div>
