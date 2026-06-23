@@ -3886,6 +3886,58 @@ function _ensureChatStyles() {
   .chat-send:hover{background:#8e7967;}
   .chat-send:disabled{opacity:.45;cursor:not-allowed;}
   .chat-thread-back{background:transparent;border:0;color:#A38D78;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;padding:0;}
+
+  /* Two-pane topic forum */
+  .forum-2pane{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 200px);min-height:560px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .topic-pane{display:flex;flex-direction:column;background:#fff;border-right:1px solid #e6dfd1;min-width:0;}
+  .topic-pane-head{padding:14px 16px;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;gap:8px;}
+  .topic-pane-head h3{margin:0;font-size:15px;color:#3b2f24;flex:1;}
+  .topic-new-btn{background:#A38D78;color:#fff;border:0;padding:7px 13px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+  .topic-new-btn:hover{background:#8e7967;}
+  .topic-list{flex:1 1 auto;overflow-y:auto;}
+  .topic-empty{padding:30px 20px;text-align:center;color:#8a7a6a;font-size:13.5px;}
+  .topic-card{padding:12px 14px;border-bottom:1px solid #f0e9da;cursor:pointer;display:flex;flex-direction:column;gap:4px;position:relative;transition:background .12s;}
+  .topic-card:hover{background:#fafaf2;}
+  .topic-card.active{background:#f5ede0;border-left:3px solid #A38D78;padding-left:11px;}
+  .topic-card-top{display:flex;align-items:center;gap:6px;}
+  .topic-card-title{font-weight:600;font-size:14px;color:#3b2f24;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .topic-card-time{font-size:11px;color:#8a7a6a;flex-shrink:0;}
+  .topic-card-preview{font-size:12.5px;color:#6a5d4d;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .topic-card-meta{display:flex;align-items:center;gap:10px;font-size:11.5px;color:#8a7a6a;margin-top:2px;}
+  .topic-card-author{color:#8a7a6a;}
+  .topic-card-replies{display:inline-flex;align-items:center;gap:3px;}
+  .topic-pin-badge{color:#A38D78;}
+  .topic-unread-badge{background:#A38D78;color:#fff;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;margin-left:auto;}
+  .topic-card.unread .topic-card-title{font-weight:700;}
+  .chat-pane{display:flex;flex-direction:column;min-width:0;background:#fafaf7;}
+  .chat-pane-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#8a7a6a;text-align:center;padding:30px;}
+  .chat-pane-empty i{font-size:48px;color:#c7b9a3;margin-bottom:14px;}
+  .chat-pane-empty h3{margin:0 0 6px;color:#3b2f24;font-size:17px;font-weight:600;}
+  .chat-pane .chat-shell{height:100%;border:0;border-radius:0;}
+
+  /* New Topic modal */
+  .topic-modal-backdrop{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;z-index:9999;}
+  .topic-modal{background:#fff;border-radius:14px;width:min(520px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.18);overflow:hidden;}
+  .topic-modal-head{padding:14px 18px;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;}
+  .topic-modal-head h3{margin:0;font-size:16px;color:#3b2f24;flex:1;}
+  .topic-modal-close{background:transparent;border:0;color:#8a7a6a;cursor:pointer;font-size:18px;}
+  .topic-modal-body{padding:16px 18px;}
+  .topic-modal-body label{display:block;font-size:12.5px;font-weight:600;color:#3b2f24;margin-bottom:5px;}
+  .topic-modal-body input,.topic-modal-body textarea{width:100%;border:1px solid #e6dfd1;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;background:#fafaf7;color:#3b2f24;outline:none;box-sizing:border-box;}
+  .topic-modal-body input:focus,.topic-modal-body textarea:focus{border-color:#A38D78;background:#fff;}
+  .topic-modal-body textarea{resize:vertical;min-height:90px;margin-top:0;}
+  .topic-modal-foot{padding:12px 18px 16px;display:flex;justify-content:flex-end;gap:8px;}
+  .topic-modal-foot .btn-cancel{background:transparent;border:1px solid #e6dfd1;color:#3b2f24;padding:8px 14px;border-radius:9px;cursor:pointer;font-size:13px;}
+  .topic-modal-foot .btn-create{background:#A38D78;color:#fff;border:0;padding:8px 16px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;}
+  .topic-modal-foot .btn-create:disabled{opacity:.5;cursor:not-allowed;}
+  .topic-modal-hint{font-size:11.5px;color:#8a7a6a;margin-top:4px;}
+
+  @media(max-width:780px){
+    .forum-2pane{grid-template-columns:1fr;height:calc(100vh - 180px);}
+    .topic-pane{display:flex;}
+    .forum-2pane.show-chat .topic-pane{display:none;}
+    .forum-2pane:not(.show-chat) .chat-pane{display:none;}
+  }
   `;
   const el = document.createElement('style');
   el.id = 'numa-chat-styles';
@@ -4011,61 +4063,177 @@ function _chatKeydown(e, sendFn) {
 }
 window._chatKeydown = _chatKeydown;
 
-// ----- Channel feed (top level) ---------------------------------------------
+// ----- Topic-based two-pane forum ------------------------------------------
+// Topic state (kept on window so inline handlers can reach it)
+window.NUMA_FORUM = window.NUMA_FORUM || { topics: [], selectedId: null, isAdmin: false };
+
+function _forumRelTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now - d;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h';
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return days + 'd';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function _renderForumShell({ isAdmin }) {
+  _ensureChatStyles();
+  const titleText = isAdmin ? 'Discussion Forum (admin)' : 'Discussion Forum';
+  return `
+    <div class="forum-2pane fade-in" id="forum-2pane">
+      <div class="topic-pane">
+        <div class="topic-pane-head">
+          <h3><i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i>${escapeHtml(titleText)}</h3>
+          <button class="topic-new-btn" onclick="openNewTopicModal()" title="Start a new topic"><i class="fa-solid fa-plus"></i> New</button>
+        </div>
+        <div class="topic-list" id="topic-list"><div class="topic-empty">Loading…</div></div>
+      </div>
+      <div class="chat-pane" id="chat-pane">
+        <div class="chat-pane-empty">
+          <i class="fa-regular fa-comments"></i>
+          <h3>Pick a topic</h3>
+          <div>Select a conversation on the left to read and reply.</div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderForumList() {
-  setTimeout(loadForumPosts, 0);
-  return _renderChatShell({
-    title: 'Community Channel',
-    subtitle: 'Chat with fellow students and your instructors',
-    composerPlaceholder: 'Message the channel…',
-    onSend: 'postForumMessage'
+  window.NUMA_FORUM.isAdmin = false;
+  setTimeout(loadForumTopics, 0);
+  return _renderForumShell({ isAdmin: false });
+}
+
+function renderAdminForum() {
+  window.NUMA_FORUM.isAdmin = true;
+  setTimeout(loadForumTopics, 0);
+  return _renderForumShell({ isAdmin: true });
+}
+
+// Old route still works — redirect to selecting that topic
+function renderForumThread() {
+  const id = APP.viewParams?.id;
+  if (id) window.NUMA_FORUM.selectedId = id;
+  setTimeout(() => {
+    loadForumTopics().then(() => { if (id) selectTopic(id); });
+  }, 0);
+  return _renderForumShell({ isAdmin: !!APP.currentUser?.isAdmin });
+}
+
+async function loadForumTopics() {
+  const topics = await apiCall('/api/forum/posts') || [];
+  // Sort: pinned first, then most recent activity
+  topics.sort((a, b) => {
+    if ((b.is_pinned ? 1 : 0) !== (a.is_pinned ? 1 : 0)) return (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0);
+    const at = new Date(a.last_activity_at || a.created_at).getTime();
+    const bt = new Date(b.last_activity_at || b.created_at).getTime();
+    return bt - at;
   });
-}
-
-async function loadForumPosts() {
-  const posts = await apiCall('/api/forum/posts') || [];
-  const stream = document.getElementById('chat-stream');
-  if (!stream) return;
-  // Backend returns newest-first; chat feels right with oldest-first chronological.
-  const ordered = [...posts].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
-  stream.innerHTML = _chatStreamHtml(ordered, { feedMode: true, isTop: true });
-  _scrollChatToBottom();
-}
-
-async function postForumMessage() {
-  const input = document.getElementById('chat-input');
-  const body = (input?.value || '').trim();
-  if (!body) return;
-  const btn = document.getElementById('chat-send-btn');
-  if (btn) btn.disabled = true;
-  const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body }) });
-  if (btn) btn.disabled = false;
-  if (out) {
-    if (input) { input.value = ''; _chatAutoGrow(input); input.focus(); }
-    // Reload to pick up the new message (whichever channel/thread we're in)
-    if (document.querySelector('.chat-thread-back')) {
-      const id = APP.viewParams?.id;
-      if (id) loadForumThread(id);
-    } else {
-      loadForumPosts();
-    }
-  } else {
-    alert('Could not post.');
+  window.NUMA_FORUM.topics = topics;
+  renderTopicList();
+  // If a topic is selected, re-render its pane too
+  if (window.NUMA_FORUM.selectedId) {
+    const stillThere = topics.find(t => t.id === window.NUMA_FORUM.selectedId);
+    if (stillThere) selectTopic(window.NUMA_FORUM.selectedId, { silent: true });
   }
 }
 
-// ----- Single thread (replies) ----------------------------------------------
-function renderForumThread() {
-  const id = APP.viewParams?.id;
-  setTimeout(() => loadForumThread(id), 0);
-  return _renderChatShell({
-    title: 'Thread',
-    subtitle: 'Reply to this conversation',
-    composerPlaceholder: 'Reply to the thread…',
-    onSend: `(() => replyForumThread(${id}))`,
-    threadBack: true
-  });
+function renderTopicList() {
+  const list = document.getElementById('topic-list');
+  if (!list) return;
+  const topics = window.NUMA_FORUM.topics || [];
+  if (!topics.length) {
+    list.innerHTML = `<div class="topic-empty"><i class="fa-regular fa-comments" style="font-size:32px;color:#c7b9a3;display:block;margin-bottom:10px;"></i>No topics yet.<br><br><button class="topic-new-btn" onclick="openNewTopicModal()"><i class="fa-solid fa-plus"></i> Start the first topic</button></div>`;
+    return;
+  }
+  const selectedId = window.NUMA_FORUM.selectedId;
+  list.innerHTML = topics.map(t => {
+    const title = t.title && t.title.trim()
+      ? t.title
+      : ((t.body || 'Untitled').split('\n')[0].slice(0, 60) + ((t.body || '').length > 60 ? '…' : ''));
+    const preview = (t.last_message_body || t.body || '').replace(/\s+/g, ' ').slice(0, 120);
+    const author = t.last_message_author || t.author_name || 'User';
+    const replies = t.reply_count || 0;
+    const unread = t.unread_count || 0;
+    const active = selectedId === t.id ? 'active' : '';
+    const unreadCls = unread > 0 && selectedId !== t.id ? 'unread' : '';
+    const pinIcon = t.is_pinned ? '<i class="fa-solid fa-thumbtack topic-pin-badge" title="Pinned"></i>' : '';
+    const unreadBadge = unread > 0 && selectedId !== t.id ? `<span class="topic-unread-badge">${unread > 99 ? '99+' : unread}</span>` : '';
+    return `
+      <div class="topic-card ${active} ${unreadCls}" onclick="selectTopic(${t.id})">
+        <div class="topic-card-top">
+          ${pinIcon}
+          <div class="topic-card-title">${escapeHtml(title)}</div>
+          <div class="topic-card-time">${_forumRelTime(t.last_activity_at || t.created_at)}</div>
+        </div>
+        <div class="topic-card-preview"><span class="topic-card-author">${escapeHtml(author)}:</span> ${escapeHtml(preview)}</div>
+        <div class="topic-card-meta">
+          <span class="topic-card-replies"><i class="fa-regular fa-comment"></i> ${replies} ${replies === 1 ? 'reply' : 'replies'}</span>
+          ${unreadBadge}
+        </div>
+      </div>`;
+  }).join('');
 }
+
+async function selectTopic(id, opts = {}) {
+  window.NUMA_FORUM.selectedId = id;
+  // On mobile: show chat pane
+  const root = document.getElementById('forum-2pane');
+  if (root) root.classList.add('show-chat');
+  // Re-render list to highlight selection
+  renderTopicList();
+  // Mount the chat shell into the chat-pane (replacing the placeholder)
+  const chatPane = document.getElementById('chat-pane');
+  if (!chatPane) return;
+  const topic = (window.NUMA_FORUM.topics || []).find(t => t.id === id) || {};
+  const title = topic.title && topic.title.trim()
+    ? topic.title
+    : ((topic.body || 'Topic').split('\n')[0].slice(0, 60) + ((topic.body || '').length > 60 ? '…' : ''));
+  const replies = topic.reply_count || 0;
+  const starter = topic.author_name || 'User';
+  chatPane.innerHTML = `
+    <div class="chat-shell">
+      <div class="chat-header">
+        <button class="chat-thread-back" onclick="closeTopicOnMobile()" style="display:none;" id="chat-back-mobile"><i class="fa-solid fa-chevron-left"></i> Topics</button>
+        <div style="flex:1;min-width:0;">
+          <h2 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i>${escapeHtml(title)}</h2>
+          <div class="chat-sub">${replies} ${replies === 1 ? 'reply' : 'replies'} • Started by ${escapeHtml(starter)}</div>
+        </div>
+      </div>
+      <div class="chat-stream" id="chat-stream"><div class="chat-empty">Loading…</div></div>
+      <div class="chat-composer">
+        <textarea id="chat-input" rows="1" placeholder="Reply to this topic…" oninput="_chatAutoGrow(this)" onkeydown="_chatKeydown(event, () => replyForumThread(${id}))"></textarea>
+        <button class="chat-send" id="chat-send-btn" onclick="replyForumThread(${id})" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+    </div>`;
+  // Show mobile back button when narrow
+  const backBtn = document.getElementById('chat-back-mobile');
+  if (backBtn && window.matchMedia('(max-width:780px)').matches) backBtn.style.display = 'inline-flex';
+  await loadForumThread(id);
+  // Mark read (best-effort)
+  try {
+    await apiCall(`/api/forum/posts/${id}/read`, { method: 'POST' });
+    // Clear unread in local cache
+    const t = (window.NUMA_FORUM.topics || []).find(x => x.id === id);
+    if (t) t.unread_count = 0;
+    renderTopicList();
+  } catch (e) { /* ignore */ }
+}
+
+window.selectTopic = selectTopic;
+window.loadForumTopics = loadForumTopics;
+
+function closeTopicOnMobile() {
+  const root = document.getElementById('forum-2pane');
+  if (root) root.classList.remove('show-chat');
+}
+window.closeTopicOnMobile = closeTopicOnMobile;
 
 async function loadForumThread(id) {
   const data = await apiCall(`/api/forum/posts/${id}`);
@@ -4073,24 +4241,30 @@ async function loadForumThread(id) {
   if (!stream || !data) return;
   const top = data.post;
   const replies = data.replies || [];
-  // Update header text/back button
-  const header = document.querySelector('.chat-header h2');
-  if (header) header.innerHTML = `<i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i> ${escapeHtml((top.body || 'Thread').split('\n')[0].slice(0, 60))}${(top.body||'').length > 60 ? '…' : ''}`;
-  const sub = document.querySelector('.chat-header .chat-sub');
-  if (sub) sub.textContent = `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'} • Started by ${top.author_name || 'User'}`;
-  // Render the top post + replies in one chronological stream
   const all = [top, ...replies].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
-  let html = _chatStreamHtml(all, { threadMode: true, isTop: false, parentId: top.id });
+  let html = '';
   // Pin banner if pinned
-  let pinBanner = document.querySelector('.chat-pin-banner');
-  if (top.is_pinned && !pinBanner) {
+  const chatHeader = document.querySelector('#chat-pane .chat-header');
+  let pinBanner = document.querySelector('#chat-pane .chat-pin-banner');
+  if (top.is_pinned && !pinBanner && chatHeader) {
     pinBanner = document.createElement('div');
     pinBanner.className = 'chat-pin-banner';
     pinBanner.innerHTML = `<i class="fa-solid fa-thumbtack"></i><div><div style="font-weight:600;margin-bottom:2px;">Pinned by staff</div>${escapeHtml((top.body || '').slice(0, 200))}${(top.body||'').length > 200 ? '…' : ''}</div>`;
-    document.querySelector('.chat-header').after(pinBanner);
+    chatHeader.after(pinBanner);
   } else if (!top.is_pinned && pinBanner) {
     pinBanner.remove();
   }
+  // Admin pin toggle in header
+  if (APP.currentUser?.isAdmin && chatHeader && !chatHeader.querySelector('.chat-pin-toggle')) {
+    const btn = document.createElement('button');
+    btn.className = 'chat-act-btn chat-pin-toggle';
+    btn.title = top.is_pinned ? 'Unpin topic' : 'Pin topic';
+    btn.innerHTML = `<i class="fa-solid fa-thumbtack"></i>`;
+    btn.style.cssText = 'background:#fafaf7;border:1px solid #e6dfd1;padding:6px 9px;border-radius:8px;color:' + (top.is_pinned ? '#A38D78' : '#8a7a6a') + ';';
+    btn.onclick = () => toggleForumPin(top.id, !top.is_pinned);
+    chatHeader.appendChild(btn);
+  }
+  html = _chatStreamHtml(all, { threadMode: true, isTop: false, parentId: top.id });
   stream.innerHTML = html;
   _scrollChatToBottom();
 }
@@ -4099,40 +4273,119 @@ async function replyForumThread(parentId) {
   const input = document.getElementById('chat-input');
   const body = (input?.value || '').trim();
   if (!body) return;
+  const btn = document.getElementById('chat-send-btn');
+  if (btn) btn.disabled = true;
   const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ body, parent_id: parentId }) });
+  if (btn) btn.disabled = false;
   if (out) {
     if (input) { input.value = ''; _chatAutoGrow(input); input.focus(); }
-    loadForumThread(parentId);
+    await loadForumThread(parentId);
+    // Refresh topic list so previews / counts update
+    loadForumTopics();
+  } else {
+    alert('Could not post reply.');
   }
 }
+window.replyForumThread = replyForumThread;
+window.deleteForumPost = (id, isTop, parentId) => deleteForumPost(id, isTop, parentId);
+window.toggleForumPin = (id, pin) => toggleForumPin(id, pin);
+
+// New-topic modal
+function openNewTopicModal() {
+  // Avoid double-open
+  if (document.getElementById('topic-modal-backdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'topic-modal-backdrop';
+  backdrop.className = 'topic-modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="topic-modal" onclick="event.stopPropagation()">
+      <div class="topic-modal-head">
+        <h3><i class="fa-solid fa-comments" style="color:#A38D78;margin-right:6px;"></i> New Topic</h3>
+        <button class="topic-modal-close" onclick="closeNewTopicModal()" title="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="topic-modal-body">
+        <label for="new-topic-title">Topic title</label>
+        <input id="new-topic-title" type="text" maxlength="120" placeholder="e.g. Cueing the hundred for beginners" />
+        <div class="topic-modal-hint">Up to 120 characters. Make it specific so others know what's inside.</div>
+        <div style="height:12px;"></div>
+        <label for="new-topic-body">First message</label>
+        <textarea id="new-topic-body" rows="4" placeholder="Start the conversation…"></textarea>
+      </div>
+      <div class="topic-modal-foot">
+        <button class="btn-cancel" onclick="closeNewTopicModal()">Cancel</button>
+        <button class="btn-create" id="new-topic-create" onclick="submitNewTopic()"><i class="fa-solid fa-paper-plane"></i> Create topic</button>
+      </div>
+    </div>`;
+  backdrop.onclick = () => closeNewTopicModal();
+  document.body.appendChild(backdrop);
+  setTimeout(() => document.getElementById('new-topic-title')?.focus(), 50);
+}
+window.openNewTopicModal = openNewTopicModal;
+
+function closeNewTopicModal() {
+  const el = document.getElementById('topic-modal-backdrop');
+  if (el) el.remove();
+}
+window.closeNewTopicModal = closeNewTopicModal;
+
+async function submitNewTopic() {
+  const titleEl = document.getElementById('new-topic-title');
+  const bodyEl = document.getElementById('new-topic-body');
+  const title = (titleEl?.value || '').trim();
+  const body = (bodyEl?.value || '').trim();
+  if (!title) { alert('Please enter a topic title.'); titleEl?.focus(); return; }
+  if (!body) { alert('Please enter a first message.'); bodyEl?.focus(); return; }
+  const btn = document.getElementById('new-topic-create');
+  if (btn) btn.disabled = true;
+  const out = await apiCall('/api/forum/posts', { method: 'POST', body: JSON.stringify({ title, body }) });
+  if (btn) btn.disabled = false;
+  if (out && out.id) {
+    closeNewTopicModal();
+    await loadForumTopics();
+    selectTopic(out.id);
+  } else {
+    alert('Could not create topic.');
+  }
+}
+window.submitNewTopic = submitNewTopic;
+
+// Legacy postForumMessage: opens the new-topic modal (top-level posts now require a title)
+async function postForumMessage() {
+  openNewTopicModal();
+}
+window.postForumMessage = postForumMessage;
 
 async function deleteForumPost(id, isTop, parentId) {
-  if (!confirm('Delete this message?')) return;
+  if (!confirm(isTop ? 'Delete this entire topic and all replies?' : 'Delete this message?')) return;
   await apiCall(`/api/forum/posts/${id}`, { method: 'DELETE' });
   if (isTop) {
-    navigate(APP.currentUser?.isAdmin ? 'admin' : 'forum', APP.currentUser?.isAdmin ? { view: 'forum' } : {});
+    window.NUMA_FORUM.selectedId = null;
+    const chatPane = document.getElementById('chat-pane');
+    if (chatPane) chatPane.innerHTML = `
+      <div class="chat-pane-empty">
+        <i class="fa-regular fa-comments"></i>
+        <h3>Pick a topic</h3>
+        <div>Select a conversation on the left to read and reply.</div>
+      </div>`;
+    loadForumTopics();
   } else if (parentId) {
     loadForumThread(parentId);
+    loadForumTopics();
   } else {
-    loadForumPosts();
+    loadForumTopics();
   }
 }
 
 async function toggleForumPin(id, pin) {
   await apiCall(`/api/admin/forum/posts/${id}`, { method: 'PUT', body: JSON.stringify({ is_pinned: pin }) });
-  // If we're in the thread of this post, reload that; otherwise reload the feed.
-  if (APP.view === 'forum-thread' && APP.viewParams?.id === id) loadForumThread(id);
-  else loadForumPosts();
-}
-
-function renderAdminForum() {
-  setTimeout(loadForumPosts, 0);
-  return _renderChatShell({
-    title: 'Community Channel (admin)',
-    subtitle: 'Moderate the student chat — pin or remove messages',
-    composerPlaceholder: 'Post an announcement or message the channel…',
-    onSend: 'postForumMessage'
-  });
+  // Update local cache
+  const t = (window.NUMA_FORUM.topics || []).find(x => x.id === id);
+  if (t) t.is_pinned = pin;
+  await loadForumTopics();
+  if (window.NUMA_FORUM.selectedId === id) {
+    // Re-render thread to update pin banner
+    loadForumThread(id);
+  }
 }
 
 // =============================================================================

@@ -353,6 +353,18 @@ export async function initDatabase() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_total NUMERIC(10,2);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_amount_paid NUMERIC(10,2) DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_notes TEXT;
+
+      -- Discussion topics: each top-level forum post is a topic with a title.
+      ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS title TEXT;
+
+      -- Per-user last-read marker for forum topics, so we can show unread counts.
+      CREATE TABLE IF NOT EXISTS forum_topic_reads (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        topic_id INTEGER NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+        last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, topic_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_forum_topic_reads_user ON forum_topic_reads(user_id);
     `);
 
     // Seed default pathway rows for each track (all modules required, hours = global).

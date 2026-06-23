@@ -1582,19 +1582,74 @@ app.delete('/api/admin/questions/:id', adminRequired, async (req, res) => {
 
 app.get('/api/forum/posts', authRequired, async (req, res) => {
   try {
+    // Topic list view: each top-level post is a topic. We include the latest message
+    // preview, last activity time, total reply count, and unread count for this user.
     const result = await pool.query(
-      `SELECT p.*, u.full_name AS author_name, u.role AS author_role,
-        (SELECT COUNT(*) FROM forum_posts c WHERE c.parent_id = p.id AND c.is_hidden = FALSE)::int AS reply_count
-       FROM forum_posts p
-       JOIN users u ON u.id = p.user_id
-       WHERE p.parent_id IS NULL AND p.is_hidden = FALSE
-       ORDER BY p.is_pinned DESC, p.created_at DESC
-       LIMIT 200`
+      `WITH topics AS (
+         SELECT p.*, u.full_name AS author_name, u.role AS author_role
+           FROM forum_posts p
+           JOIN users u ON u.id = p.user_id
+          WHERE p.parent_id IS NULL AND p.is_hidden = FALSE
+       ),
+       reply_agg AS (
+         SELECT c.parent_id AS topic_id,
+                COUNT(*)::int AS reply_count,
+                MAX(c.created_at) AS last_reply_at
+           FROM forum_posts c
+          WHERE c.parent_id IS NOT NULL AND c.is_hidden = FALSE
+          GROUP BY c.parent_id
+       ),
+       last_msg AS (
+         SELECT DISTINCT ON (c.parent_id)
+                c.parent_id AS topic_id, c.body AS last_body, c.created_at AS last_at,
+                u2.full_name AS last_author_name
+           FROM forum_posts c
+           JOIN users u2 ON u2.id = c.user_id
+          WHERE c.parent_id IS NOT NULL AND c.is_hidden = FALSE
+          ORDER BY c.parent_id, c.created_at DESC
+       )
+       SELECT t.*,
+              COALESCE(ra.reply_count, 0) AS reply_count,
+              GREATEST(t.created_at, COALESCE(ra.last_reply_at, t.created_at)) AS last_activity_at,
+              lm.last_body AS last_message_body,
+              lm.last_author_name AS last_message_author,
+              ftr.last_read_at,
+              CASE
+                WHEN ftr.last_read_at IS NULL THEN COALESCE(ra.reply_count, 0) + 1
+                ELSE (SELECT COUNT(*)::int FROM forum_posts c2
+                       WHERE c2.parent_id = t.id
+                         AND c2.is_hidden = FALSE
+                         AND c2.created_at > ftr.last_read_at)
+                     + CASE WHEN t.created_at > ftr.last_read_at THEN 1 ELSE 0 END
+              END AS unread_count
+         FROM topics t
+         LEFT JOIN reply_agg ra ON ra.topic_id = t.id
+         LEFT JOIN last_msg  lm ON lm.topic_id = t.id
+         LEFT JOIN forum_topic_reads ftr ON ftr.topic_id = t.id AND ftr.user_id = $1
+        ORDER BY t.is_pinned DESC, GREATEST(t.created_at, COALESCE(ra.last_reply_at, t.created_at)) DESC
+        LIMIT 200`,
+      [req.user.id]
     );
     res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load forum' });
+  }
+});
+
+// Mark a topic as read by the current user (used when they open the chat room).
+app.post('/api/forum/posts/:id/read', authRequired, async (req, res) => {
+  try {
+    await pool.query(
+      `INSERT INTO forum_topic_reads (user_id, topic_id, last_read_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id, topic_id) DO UPDATE SET last_read_at = NOW()`,
+      [req.user.id, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('mark topic read', e);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1623,11 +1678,17 @@ app.get('/api/forum/posts/:id', authRequired, async (req, res) => {
 
 app.post('/api/forum/posts', authRequired, async (req, res) => {
   try {
-    const { body, parent_id } = req.body || {};
+    const { body, parent_id, title } = req.body || {};
     if (!body || !body.trim()) return res.status(400).json({ error: 'Message required' });
+    // Title only applies to a top-level topic (no parent_id).
+    let cleanTitle = null;
+    if (!parent_id) {
+      cleanTitle = (title || '').trim().slice(0, 120) || null;
+      if (!cleanTitle) return res.status(400).json({ error: 'Topic title required' });
+    }
     const result = await pool.query(
-      `INSERT INTO forum_posts (user_id, body, parent_id) VALUES ($1, $2, $3) RETURNING *`,
-      [req.user.id, body.trim(), parent_id || null]
+      `INSERT INTO forum_posts (user_id, body, parent_id, title) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.user.id, body.trim(), parent_id || null, cleanTitle]
     );
     // Notify everyone except the author (admins included). Cap body preview.
     const u = await pool.query('SELECT full_name, username, role FROM users WHERE id = $1', [req.user.id]);
@@ -1636,13 +1697,21 @@ app.post('/api/forum/posts', authRequired, async (req, res) => {
     const isReply = !!parent_id;
     const preview = body.trim().slice(0, 200);
     const topId = parent_id || result.rows[0].id;
+    // For replies, look up the parent topic's title so notifications read nicely.
+    let topicTitle = cleanTitle;
+    if (isReply) {
+      const parent = await pool.query('SELECT title FROM forum_posts WHERE id = $1', [parent_id]);
+      topicTitle = parent.rows[0]?.title || null;
+    }
     // Notify all OTHER users (students + admins) about the new message
     pool.query("SELECT id FROM users WHERE id != $1", [req.user.id])
       .then(async (r) => {
         for (const row of r.rows) {
           await notify(row.id, {
             type: 'forum_message',
-            title: isReply ? `${name} replied in a thread` : `${name} posted in the channel`,
+            title: isReply
+              ? `${name} replied in “${topicTitle || 'a topic'}”`
+              : `${name} started “${topicTitle || 'a new topic'}”`,
             body: preview,
             link_view: isReply ? 'forum-thread' : 'forum',
             link_params: isReply ? { id: topId } : null
