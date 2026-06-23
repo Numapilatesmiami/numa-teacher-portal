@@ -365,6 +365,21 @@ export async function initDatabase() {
         PRIMARY KEY (user_id, topic_id)
       );
       CREATE INDEX IF NOT EXISTS idx_forum_topic_reads_user ON forum_topic_reads(user_id);
+
+      -- Content protection: Terms of Service acceptance timestamp.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tos_accepted_at TIMESTAMPTZ;
+
+      -- Content protection: log of possible screenshot/visibility-blur events.
+      CREATE TABLE IF NOT EXISTS screenshot_alerts (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        page_url TEXT,
+        user_agent TEXT,
+        reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_screenshot_alerts_user ON screenshot_alerts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_screenshot_alerts_created ON screenshot_alerts(created_at DESC);
     `);
 
     // Seed default pathway rows for each track (all modules required, hours = global).

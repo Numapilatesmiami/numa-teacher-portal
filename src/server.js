@@ -171,10 +171,73 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const result = await pool.query(
-    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid FROM users WHERE id = $1',
+    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tos_accepted_at FROM users WHERE id = $1',
     [req.user.id]
   );
   res.json(result.rows[0] || null);
+});
+
+// ===== CONTENT PROTECTION =====
+// Record that the current user accepted the Terms of Service.
+app.post('/api/security/tos-accept', authRequired, async (req, res) => {
+  try {
+    await pool.query(
+      'UPDATE users SET tos_accepted_at = NOW() WHERE id = $1 AND tos_accepted_at IS NULL',
+      [req.user.id]
+    );
+    const r = await pool.query('SELECT tos_accepted_at FROM users WHERE id = $1', [req.user.id]);
+    res.json({ ok: true, tos_accepted_at: r.rows[0]?.tos_accepted_at || null });
+  } catch (err) {
+    console.error('[tos-accept]', err);
+    res.status(500).json({ error: 'Failed to record acceptance' });
+  }
+});
+
+// Log a possible screenshot / visibility-blur event and notify admins.
+// Body: { page_url, reason }. user_agent is taken from request headers.
+app.post('/api/security/screenshot-attempt', authRequired, async (req, res) => {
+  try {
+    const { page_url, reason } = req.body || {};
+    const ua = (req.headers['user-agent'] || '').toString().slice(0, 500);
+    const url = (page_url || '').toString().slice(0, 500);
+    const why = (reason || 'blur').toString().slice(0, 100);
+    await pool.query(
+      'INSERT INTO screenshot_alerts (user_id, page_url, user_agent, reason) VALUES ($1, $2, $3, $4)',
+      [req.user.id, url, ua, why]
+    );
+    // Resolve student name for notification body.
+    const u = await pool.query('SELECT full_name, username, email FROM users WHERE id = $1', [req.user.id]);
+    const who = u.rows[0]?.full_name || u.rows[0]?.username || u.rows[0]?.email || ('user #' + req.user.id);
+    notifyAdmins({
+      type: 'security',
+      title: 'Possible screenshot — ' + who,
+      body: 'Page: ' + url + '\nReason: ' + why,
+      link: '/admin/security'
+    }).catch((e) => console.warn('[screenshot-alert] notify failed', e?.message));
+    res.json({ ok: true });
+  } catch (err) {
+    console.warn('[screenshot-attempt]', err?.message);
+    // Best-effort: never break the client over a missed log row.
+    res.json({ ok: false });
+  }
+});
+
+// Admin: list recent screenshot alerts.
+app.get('/api/admin/screenshot-alerts', adminRequired, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT a.id, a.user_id, a.page_url, a.user_agent, a.reason, a.created_at,
+              u.full_name, u.username, u.email
+         FROM screenshot_alerts a
+         LEFT JOIN users u ON u.id = a.user_id
+        ORDER BY a.created_at DESC
+        LIMIT 200`
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('[screenshot-alerts list]', err);
+    res.status(500).json({ error: 'Failed to load alerts' });
+  }
 });
 
 // ===== MODULES (PUBLIC READ) =====

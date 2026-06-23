@@ -7079,3 +7079,251 @@ async function loadAdminHomeworkInbox() {
     }
   }, 500);
 })();
+
+// ==========================================================================
+// CONTENT PROTECTION (watermark, copyright, ToS, print-block, screenshot watch)
+// ==========================================================================
+(function NUMA_PROTECT(){
+  'use strict';
+  const APP_REF = window.APP || (window.APP = {});
+
+  function _currentUser() {
+    try { return APP_REF.currentUser || null; } catch (_) { return null; }
+  }
+  function _displayName(u) {
+    if (!u) return 'Student';
+    return u.full_name || u.fullName || u.username || u.email || 'Student';
+  }
+  function _displayEmail(u) {
+    if (!u) return '';
+    return u.email || u.username || '';
+  }
+
+  // ---------- Watermark overlay ----------
+  function _ensureWatermark() {
+    const u = _currentUser();
+    if (!u) {
+      const el = document.getElementById('numa-watermark');
+      if (el) el.remove();
+      return;
+    }
+    const name = _displayName(u);
+    const email = _displayEmail(u);
+    const label = (name + (email ? '  \u2022  ' + email : '') + '  \u2022  \u00A9 NUMA Pilates')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Build a tiling SVG with diagonal repeating text.
+    const tileW = 520, tileH = 220;
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + tileW + '" height="' + tileH + '">' +
+        '<g transform="rotate(-28 ' + (tileW/2) + ' ' + (tileH/2) + ')" ' +
+            'fill="#A38D78" fill-opacity="0.18" ' +
+            'font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" ' +
+            'font-size="16" font-weight="600">' +
+          '<text x="20" y="60">' + label + '</text>' +
+          '<text x="20" y="160">' + label + '</text>' +
+        '</g>' +
+      '</svg>';
+    const dataUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    let el = document.getElementById('numa-watermark');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'numa-watermark';
+      el.setAttribute('aria-hidden', 'true');
+      el.style.cssText = [
+        'position:fixed',
+        'top:0','left:0','right:0','bottom:0',
+        'pointer-events:none',
+        'z-index:9998',
+        'background-repeat:repeat',
+        'mix-blend-mode:multiply',
+        'user-select:none',
+        '-webkit-user-select:none',
+        '-moz-user-select:none',
+        'opacity:0.55'
+      ].join(';');
+      document.body.appendChild(el);
+    }
+    el.style.backgroundImage = 'url("' + dataUrl + '")';
+  }
+
+  // ---------- Copyright footer ----------
+  function _ensureCopyrightFooter() {
+    const u = _currentUser();
+    if (!u) {
+      const el = document.getElementById('numa-copyright-footer');
+      if (el) el.remove();
+      return;
+    }
+    let el = document.getElementById('numa-copyright-footer');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'numa-copyright-footer';
+      el.style.cssText = [
+        'margin:48px 16px 24px',
+        'padding:16px 20px',
+        'text-align:center',
+        'font-size:12px',
+        'line-height:1.6',
+        'color:#6a5d4d',
+        'background:#fafaf7',
+        'border-top:1px solid #e6dfd1',
+        'border-radius:8px',
+        'letter-spacing:0.02em',
+        'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+      ].join(';');
+      el.innerHTML =
+        '\u00A9 ' + new Date().getFullYear() + ' NUMA Pilates \u2022 All rights reserved \u2022 ' +
+        'Proprietary curriculum \u2014 do not copy, share, or distribute. ' +
+        'Access is licensed to the named student only.';
+      document.body.appendChild(el);
+    }
+  }
+
+  // ---------- Terms of Service modal ----------
+  function _tosCopy() {
+    return (
+      '<h2 style="margin:0 0 12px;font-size:22px;color:#3d3328">Terms of Service</h2>' +
+      '<p style="margin:0 0 12px;color:#3d3328">Welcome to the NUMA Pilates Certification Portal. ' +
+      'Before continuing, please review and accept the following:</p>' +
+      '<ul style="margin:0 0 12px 18px;padding:0;color:#3d3328;line-height:1.6">' +
+        '<li>All curriculum, videos, manuals, exams, and assessments are the proprietary intellectual property of NUMA Pilates.</li>' +
+        '<li>Your access is personal and non-transferable. You may not share your login, record, screenshot, download, redistribute, or republish any content.</li>' +
+        '<li>Every page is watermarked with your name and email to discourage unauthorized sharing.</li>' +
+        '<li>Suspected screenshot attempts may be logged and reviewed by NUMA Pilates administrators.</li>' +
+        '<li>Violations may result in immediate revocation of access and possible legal action.</li>' +
+        '<li>By clicking \u201CI Agree\u201D you confirm you have read and accept these terms.</li>' +
+      '</ul>'
+    );
+  }
+  function _ensureTosModal() {
+    const u = _currentUser();
+    if (!u) return;
+    // Admins do not need to accept.
+    if (u.role === 'admin' || u.isAdmin) return;
+    if (u.tos_accepted_at) return;
+    if (document.getElementById('numa-tos-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'numa-tos-modal';
+    overlay.style.cssText = [
+      'position:fixed','inset:0','z-index:99999',
+      'background:rgba(45,35,25,0.55)',
+      'display:flex','align-items:center','justify-content:center',
+      'padding:16px',
+      'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+    ].join(';');
+    overlay.innerHTML =
+      '<div style="background:#fff;max-width:560px;width:100%;border-radius:14px;' +
+                  'box-shadow:0 20px 60px rgba(0,0,0,0.25);padding:28px 28px 22px;' +
+                  'max-height:85vh;overflow:auto">' +
+        _tosCopy() +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">' +
+          '<button id="numa-tos-decline" style="padding:10px 16px;border:1px solid #e6dfd1;' +
+                  'background:#fff;color:#6a5d4d;border-radius:8px;cursor:pointer;font-weight:600">' +
+            'Decline &amp; Log out</button>' +
+          '<button id="numa-tos-accept" style="padding:10px 18px;border:0;' +
+                  'background:#A38D78;color:#fff;border-radius:8px;cursor:pointer;font-weight:700">' +
+            'I Agree</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.getElementById('numa-tos-accept').addEventListener('click', async () => {
+      try {
+        await apiCall('/api/security/tos-accept', { method: 'POST', body: JSON.stringify({}) });
+        if (APP_REF.currentUser) APP_REF.currentUser.tos_accepted_at = new Date().toISOString();
+      } catch (e) { console.warn('[tos-accept]', e?.message); }
+      overlay.remove();
+    });
+    document.getElementById('numa-tos-decline').addEventListener('click', () => {
+      try { localStorage.removeItem('numa_token'); } catch (_) {}
+      try { localStorage.removeItem('numa_session'); } catch (_) {}
+      window.location.reload();
+    });
+  }
+
+  // ---------- Screenshot / blur watch ----------
+  const SCREENSHOT_STATE = { lastSent: 0, mounted: false };
+  function _reportScreenshot(reason) {
+    const u = _currentUser();
+    if (!u) return;
+    if (u.role === 'admin' || u.isAdmin) return; // don't alert on admin's own screen
+    const now = Date.now();
+    if (now - SCREENSHOT_STATE.lastSent < 4000) return; // debounce
+    SCREENSHOT_STATE.lastSent = now;
+    try {
+      apiCall('/api/security/screenshot-attempt', {
+        method: 'POST',
+        body: JSON.stringify({
+          page_url: window.location.href,
+          reason: reason || 'blur'
+        })
+      }).catch(() => {});
+    } catch (_) {}
+  }
+  function _initScreenshotWatch() {
+    if (SCREENSHOT_STATE.mounted) return;
+    SCREENSHOT_STATE.mounted = true;
+    // Blur (alt-tab, command-shift-3 on mac sometimes briefly blurs)
+    window.addEventListener('blur', () => {
+      // Skip if no user / on login screen
+      if (!_currentUser()) return;
+      _reportScreenshot('window-blur');
+    });
+    // Visibility change (tab hidden -> commonly fires when system screenshot UI opens on some OSes)
+    document.addEventListener('visibilitychange', () => {
+      if (!_currentUser()) return;
+      if (document.visibilityState === 'hidden') {
+        _reportScreenshot('visibility-hidden');
+      }
+    });
+    // iOS / mobile: detect screenshot keystrokes are not directly observable,
+    // but a quick blur+focus cycle is a strong hint. We rely on the blur handler.
+    // Keyboard shortcuts commonly used for screenshots on desktop.
+    document.addEventListener('keydown', (e) => {
+      if (!_currentUser()) return;
+      const key = (e.key || '').toLowerCase();
+      // PrintScreen
+      if (key === 'printscreen' || e.keyCode === 44) {
+        _reportScreenshot('printscreen-key');
+      }
+      // macOS: Cmd+Shift+3/4/5
+      if (e.metaKey && e.shiftKey && (key === '3' || key === '4' || key === '5')) {
+        _reportScreenshot('mac-screenshot-shortcut');
+      }
+      // Windows: Win+Shift+S
+      if (e.shiftKey && (e.metaKey || e.getModifierState && e.getModifierState('OS')) && key === 's') {
+        _reportScreenshot('win-screenshot-shortcut');
+      }
+    });
+  }
+
+  // ---------- Print blocking (JS side; CSS does the real work) ----------
+  window.addEventListener('beforeprint', () => {
+    const u = _currentUser();
+    if (!u) return;
+    // Allow certificate printing only if a .cert-print element is present.
+    if (document.querySelector('.cert-print')) return;
+    _reportScreenshot('print-attempt');
+  });
+
+  // ---------- Mount loop ----------
+  function _mountAll() {
+    if (!document.body) return;
+    _ensureWatermark();
+    _ensureCopyrightFooter();
+    _ensureTosModal();
+    _initScreenshotWatch();
+  }
+  // Initial mount + periodic refresh (in case body re-renders).
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _mountAll);
+  } else {
+    _mountAll();
+  }
+  setInterval(_mountAll, 2500);
+
+  // Expose for manual refresh after login.
+  window.NUMA_PROTECT = {
+    refresh: _mountAll,
+    reportScreenshot: _reportScreenshot
+  };
+})();
