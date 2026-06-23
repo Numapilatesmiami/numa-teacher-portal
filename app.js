@@ -680,7 +680,9 @@ function renderLockedModule(mod) {
 // ===== QUIZZES =====
 function renderQuiz(mod) {
   const user = APP.currentUser;
-  const bestScore = user.quizScores ? user.quizScores[mod.id] : null;
+  const rawScore = user.quizScores ? user.quizScores[mod.id] : null;
+  // Treat undefined/null/non-numeric as "not taken yet"
+  const bestScore = (typeof rawScore === 'number' && !isNaN(rawScore)) ? rawScore : null;
   const quiz = mod.quiz;
 
   // Check if quiz is currently being taken
