@@ -4978,3 +4978,458 @@ async function pushMyLocalProgress() {
   return pushed;
 }
 window.pushMyLocalProgress = pushMyLocalProgress;
+
+// ============================================================
+// ENROLLMENT MANAGEMENT (Admin)
+// ------------------------------------------------------------
+// Adds: delete student button, edit student enrollment metadata
+// (program track, tuition), and a Pathways admin page.
+// All these features write to the backend; the admin views are
+// rendered fresh from the backend each time so there is no
+// localStorage drift to worry about.
+// ============================================================
+
+// Cache for pathway settings and the live student list (with new fields)
+const NUMA_ENROLL = {
+  studentListCache: null,
+  studentListAt: 0,
+  pathwayCache: null,
+  pathwayAt: 0
+};
+
+async function fetchStudentsFresh() {
+  const list = await apiCall('/api/admin/students');
+  if (Array.isArray(list)) {
+    NUMA_ENROLL.studentListCache = list;
+    NUMA_ENROLL.studentListAt = Date.now();
+  }
+  return Array.isArray(list) ? list : [];
+}
+
+async function fetchPathways() {
+  if (NUMA_ENROLL.pathwayCache && (Date.now() - NUMA_ENROLL.pathwayAt < 30000)) {
+    return NUMA_ENROLL.pathwayCache;
+  }
+  const r = await apiCall('/api/program-settings');
+  const settings = (r && r.settings) || {};
+  const pathways = {
+    mat: settings.pathway_mat || { required_module_ids: [], hour_requirements: null, label: 'Mat Certification' },
+    reformer: settings.pathway_reformer || { required_module_ids: [], hour_requirements: null, label: 'Reformer Certification' },
+    both: settings.pathway_both || { required_module_ids: [], hour_requirements: null, label: 'Mat + Reformer Certification' }
+  };
+  NUMA_ENROLL.pathwayCache = pathways;
+  NUMA_ENROLL.pathwayAt = Date.now();
+  return pathways;
+}
+
+function trackLabel(track) {
+  if (!track) return 'Not assigned';
+  if (track === 'mat') return 'Mat Certification';
+  if (track === 'reformer') return 'Reformer Certification';
+  if (track === 'both') return 'Mat + Reformer';
+  return track;
+}
+
+function tuitionLabel(status) {
+  if (status === 'paid') return '<span style="color:#2e7d32;font-weight:600;"><i class="fa-solid fa-circle-check"></i> Paid</span>';
+  if (status === 'partial') return '<span style="color:#ef6c00;font-weight:600;"><i class="fa-solid fa-circle-half-stroke"></i> Partial</span>';
+  return '<span style="color:#c62828;font-weight:600;"><i class="fa-solid fa-circle-exclamation"></i> Unpaid</span>';
+}
+
+// Delete student
+async function deleteStudentConfirm(studentId, username) {
+  const typed = prompt(`This will permanently delete ${username} and all their quiz scores, hours, and scenario submissions. This cannot be undone.\n\nType the username "${username}" to confirm:`);
+  if (typed !== username) {
+    if (typed !== null) alert('Username did not match. Deletion cancelled.');
+    return;
+  }
+  const r = await apiCall(`/api/admin/students/${studentId}`, { method: 'DELETE' });
+  if (r && r.ok) {
+    alert(`Deleted ${username}.`);
+    // Also remove from local cache so the rendered list updates
+    try {
+      const local = getUsers().filter(u => u.username !== username);
+      _sSet('numa_users', JSON.stringify(local));
+    } catch (e) {}
+    navigate('admin');
+  } else {
+    alert('Delete failed: ' + ((r && r.error) || 'unknown error'));
+  }
+}
+window.deleteStudentConfirm = deleteStudentConfirm;
+
+// Patch a student's enrollment metadata
+async function patchStudent(studentId, payload) {
+  return await apiCall(`/api/admin/students/${studentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
+// Save the enrollment form on the student detail page
+async function saveStudentEnrollment(studentId) {
+  const statusEl = document.getElementById('enroll-status');
+  if (statusEl) statusEl.textContent = 'Saving…';
+  const payload = {
+    program_track: document.getElementById('enroll-track').value || null,
+    tuition_status: document.getElementById('enroll-tuition-status').value,
+    tuition_total: parseFloat(document.getElementById('enroll-tuition-total').value) || null,
+    tuition_amount_paid: parseFloat(document.getElementById('enroll-tuition-paid').value) || 0,
+    tuition_notes: document.getElementById('enroll-tuition-notes').value || null
+  };
+  const r = await patchStudent(studentId, payload);
+  if (r && !r.error) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#2e7d32;">Saved.</span>';
+    // Force the next admin list to refresh
+    NUMA_ENROLL.studentListCache = null;
+  } else {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#c62828;">Save failed: ' + ((r && r.error) || 'error') + '</span>';
+  }
+}
+window.saveStudentEnrollment = saveStudentEnrollment;
+
+// Render the enrollment card (track + tuition) inside the student detail page
+function renderEnrollmentCard(student) {
+  if (!student) return '';
+  const track = student.program_track || '';
+  const status = student.tuition_status || 'unpaid';
+  const total = student.tuition_total != null ? student.tuition_total : '';
+  const paid = student.tuition_amount_paid != null ? student.tuition_amount_paid : 0;
+  const notes = student.tuition_notes || '';
+  return `
+    <div class="card mb-3" style="border-left:4px solid #A38D78;">
+      <div class="card-body">
+        <h3 style="margin-top:0;"><i class="fa-solid fa-clipboard-user"></i> Enrollment</h3>
+        <div class="form-group">
+          <label><strong>Program Track</strong></label>
+          <select id="enroll-track" class="form-control">
+            <option value="" ${track === '' ? 'selected' : ''}>— Not assigned —</option>
+            <option value="mat" ${track === 'mat' ? 'selected' : ''}>Mat Certification</option>
+            <option value="reformer" ${track === 'reformer' ? 'selected' : ''}>Reformer Certification</option>
+            <option value="both" ${track === 'both' ? 'selected' : ''}>Mat + Reformer (Both)</option>
+          </select>
+          <small class="text-muted">The student sees the modules required for this track. Leave unassigned and they'll see "contact your instructor".</small>
+        </div>
+        <hr>
+        <div class="form-group">
+          <label><strong>Tuition Status</strong></label>
+          <select id="enroll-tuition-status" class="form-control">
+            <option value="unpaid" ${status === 'unpaid' ? 'selected' : ''}>Unpaid</option>
+            <option value="partial" ${status === 'partial' ? 'selected' : ''}>Partial</option>
+            <option value="paid" ${status === 'paid' ? 'selected' : ''}>Paid in full</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+          <div class="form-group" style="flex:1;min-width:140px;">
+            <label>Total Tuition ($)</label>
+            <input type="number" min="0" step="0.01" id="enroll-tuition-total" class="form-control" value="${total === '' ? '' : total}" placeholder="e.g. 3500">
+          </div>
+          <div class="form-group" style="flex:1;min-width:140px;">
+            <label>Amount Paid ($)</label>
+            <input type="number" min="0" step="0.01" id="enroll-tuition-paid" class="form-control" value="${paid}" placeholder="e.g. 1500">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notes (private — admin only)</label>
+          <textarea id="enroll-tuition-notes" class="form-control" rows="2" placeholder="e.g. Payment plan, scholarship, due date">${escapeHtml(notes)}</textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="saveStudentEnrollment(${student.id})"><i class="fa-solid fa-floppy-disk"></i> Save Enrollment</button>
+          <button class="btn btn-secondary" onclick="deleteStudentConfirm(${student.id}, '${escapeAttr(student.username)}')" style="background:#c62828;color:#fff;border-color:#c62828;"><i class="fa-solid fa-trash"></i> Delete Student</button>
+          <span id="enroll-status" class="text-muted text-sm"></span>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Wrap the admin student detail page so it pulls fresh student data
+// (with new fields) from the backend and adds the enrollment card up top.
+(function wrapAdminStudentDetailForEnrollment() {
+  if (typeof renderAdminStudentDetail !== 'function') return;
+  const _orig = renderAdminStudentDetail;
+  window.renderAdminStudentDetail = function(username) {
+    // Kick off async fetch to populate the enrollment card from the backend
+    setTimeout(async () => {
+      try {
+        const list = await fetchStudentsFresh();
+        const student = list.find(s => s.username === username);
+        const target = document.getElementById('enrollment-card-slot');
+        if (target && student) {
+          target.innerHTML = renderEnrollmentCard(student);
+        }
+      } catch (e) { console.warn('[enrollment]', e); }
+    }, 0);
+    // Render the original page but inject a slot at the top
+    let html = _orig.call(this, username);
+    // Insert the enrollment slot right after the page header
+    const slot = '<div id="enrollment-card-slot"><div class="card mb-3"><div class="card-body text-center text-muted">Loading enrollment…</div></div></div>';
+    // Look for the </div> closing the page-header — fall back to prepending
+    const inserted = html.replace(/(<\/div>\s*<div class="stats-grid)/, '</div>' + slot + '$1');
+    return inserted === html ? slot + html : inserted;
+  };
+  renderAdminStudentDetail = window.renderAdminStudentDetail;
+})();
+
+// Wrap the wrapper too (so the scenario-grading wrapper still works)
+(function rewrapForLatestOverride() {
+  // No-op: the chain is already preserved by wrap-on-wrap above.
+})();
+
+// Also enrich the Students list table with the new columns
+(function wrapStudentsListForEnrollment() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  window.renderAdminContent = function() {
+    const html = _orig.apply(this, arguments);
+    // After rendering, decorate the rows with the extra columns
+    setTimeout(decorateStudentsTable, 0);
+    return html;
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+async function decorateStudentsTable() {
+  const table = document.querySelector('.admin-table');
+  if (!table) return;
+  const head = table.querySelector('thead tr');
+  if (!head) return;
+  // Avoid double-injection
+  if (table.dataset.enrollmentDecorated === '1') return;
+  // Only decorate the Students table — has a row with header text "Student"
+  const headerCells = Array.from(head.querySelectorAll('th'));
+  const isStudents = headerCells.some(th => th.textContent.trim() === 'Student')
+                    && headerCells.some(th => th.textContent.trim() === 'Email');
+  if (!isStudents) return;
+  table.dataset.enrollmentDecorated = '1';
+
+  const list = await fetchStudentsFresh();
+  const byUsername = {};
+  list.forEach(s => { byUsername[s.username] = s; });
+
+  // Insert two new header columns after "Email"
+  const emailHeaderIdx = headerCells.findIndex(th => th.textContent.trim() === 'Email');
+  if (emailHeaderIdx >= 0) {
+    const trackTh = document.createElement('th'); trackTh.textContent = 'Track';
+    const tuitionTh = document.createElement('th'); tuitionTh.textContent = 'Tuition';
+    head.insertBefore(tuitionTh, headerCells[emailHeaderIdx + 1] || null);
+    head.insertBefore(trackTh, tuitionTh);
+  }
+
+  // Decorate each row
+  const rows = table.querySelectorAll('tbody tr');
+  rows.forEach(tr => {
+    const userCell = tr.querySelector('td');
+    if (!userCell) return;
+    const small = userCell.querySelector('span');
+    const username = small ? small.textContent.trim() : '';
+    const s = byUsername[username];
+    const trackCell = document.createElement('td');
+    trackCell.style.fontSize = '12px';
+    trackCell.textContent = s ? trackLabel(s.program_track) : 'Not assigned';
+    if (s && !s.program_track) trackCell.style.color = '#c62828';
+    const tuitionCell = document.createElement('td');
+    tuitionCell.style.fontSize = '12px';
+    tuitionCell.innerHTML = s ? tuitionLabel(s.tuition_status || 'unpaid') : '—';
+    // Insert after email column (the 2nd td)
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 2) {
+      tds[1].parentNode.insertBefore(tuitionCell, tds[2] || null);
+      tds[1].parentNode.insertBefore(trackCell, tuitionCell);
+    }
+  });
+}
+
+// ============================================================
+// PATHWAYS PAGE (Admin)
+// ------------------------------------------------------------
+// Lets admin pick which modules are required for each of the three
+// tracks (Mat, Reformer, Both) and override the hour requirements.
+// ============================================================
+
+(function wrapAdminContentForPathways() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  window.renderAdminContent = function() {
+    const p = APP.viewParams || {};
+    if (p.view === 'pathways') return renderAdminPathways();
+    return _orig.apply(this, arguments);
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+function renderAdminPathways() {
+  setTimeout(loadPathwaysIntoPage, 0);
+  return `
+    <div class="breadcrumb fade-in">
+      <a href="#" onclick="navigate('admin');return false;">Admin</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <span>Certification Pathways</span>
+    </div>
+    <div class="page-header fade-in">
+      <h1><i class="fa-solid fa-route"></i> Certification Pathways</h1>
+      <p>Define which modules are required for each track and the practice hours each student must log to certify.</p>
+    </div>
+    <div id="pathway-content"><div class="card"><div class="card-body text-center text-muted">Loading pathways…</div></div></div>
+  `;
+}
+
+async function loadPathwaysIntoPage() {
+  // Force fresh
+  NUMA_ENROLL.pathwayCache = null;
+  const [pathways, modules] = await Promise.all([fetchPathways(), loadAdminModules()]);
+  const sorted = [...modules].sort((a, b) => extractFirstWeekNumber(a) - extractFirstWeekNumber(b));
+  const target = document.getElementById('pathway-content');
+  if (!target) return;
+  target.innerHTML = ['mat', 'reformer', 'both'].map(track => {
+    const p = pathways[track];
+    const reqIds = new Set((p.required_module_ids || []).map(String));
+    const allRequired = !p.required_module_ids || p.required_module_ids.length === 0;
+    const hr = p.hour_requirements || {};
+    return `
+      <div class="card mb-3" style="border-left:4px solid ${track === 'mat' ? '#8d6e63' : track === 'reformer' ? '#5d4037' : '#A38D78'};">
+        <div class="card-body">
+          <h2 style="margin-top:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <i class="fa-solid fa-${track === 'both' ? 'layer-group' : track === 'reformer' ? 'compress' : 'border-all'}"></i>
+            ${escapeHtml(p.label || trackLabel(track))}
+          </h2>
+          <div style="margin-bottom:10px;">
+            <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
+              <input type="checkbox" id="pathway-${track}-all" ${allRequired ? 'checked' : ''} onchange="togglePathwayAllModules('${track}', this.checked)">
+              <span><strong>All modules required</strong> (uncheck to pick specific modules)</span>
+            </label>
+          </div>
+          <div id="pathway-${track}-modules" style="display:${allRequired ? 'none' : 'block'};border:1px solid var(--cream-darker);border-radius:8px;padding:12px;margin-bottom:14px;background:#fafafa;">
+            ${sorted.map(m => {
+              const checked = reqIds.has(String(m.id));
+              return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eee;">
+                <input type="checkbox" data-track="${track}" data-mod="${escapeAttr(m.id)}" class="pathway-mod-checkbox" ${checked ? 'checked' : ''}>
+                <strong>Module ${escapeHtml(String(m.id))}:</strong> ${escapeHtml(m.title || '')}
+                <span class="text-muted" style="font-size:12px;margin-left:auto;">${escapeHtml(m.week || m.subtitle || '')}</span>
+              </label>`;
+            }).join('')}
+          </div>
+          <h4 style="margin-bottom:6px;">Hour Requirements (this track only)</h4>
+          <p class="text-muted text-sm" style="margin-top:0;">Leave any field blank to use the global default from Program Settings.</p>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px;">
+            <label>Observation<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="observation" value="${hr.observation ?? ''}"></label>
+            <label>Teaching<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="teaching" value="${hr.teaching ?? ''}"></label>
+            <label>Personal<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="personal" value="${hr.personal ?? ''}"></label>
+            <label>Total<input type="number" min="0" class="form-control pathway-hr" data-track="${track}" data-field="total" value="${hr.total ?? ''}"></label>
+          </div>
+          <button class="btn btn-primary" onclick="savePathway('${track}')"><i class="fa-solid fa-floppy-disk"></i> Save ${escapeHtml(trackLabel(track))} Pathway</button>
+          <span id="pathway-${track}-status" class="text-muted text-sm" style="margin-left:10px;"></span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function togglePathwayAllModules(track, isAll) {
+  const box = document.getElementById(`pathway-${track}-modules`);
+  if (box) box.style.display = isAll ? 'none' : 'block';
+}
+window.togglePathwayAllModules = togglePathwayAllModules;
+
+async function savePathway(track) {
+  const statusEl = document.getElementById(`pathway-${track}-status`);
+  if (statusEl) statusEl.textContent = 'Saving…';
+  const allRequired = document.getElementById(`pathway-${track}-all`)?.checked;
+  let requiredIds = [];
+  if (!allRequired) {
+    document.querySelectorAll(`.pathway-mod-checkbox[data-track="${track}"]`).forEach(cb => {
+      if (cb.checked) requiredIds.push(String(cb.dataset.mod));
+    });
+  }
+  const hr = {};
+  document.querySelectorAll(`.pathway-hr[data-track="${track}"]`).forEach(inp => {
+    const v = inp.value.trim();
+    if (v !== '') hr[inp.dataset.field] = parseFloat(v);
+  });
+  const value = {
+    required_module_ids: requiredIds,
+    hour_requirements: Object.keys(hr).length ? hr : null,
+    requires_final_exam: true,
+    requires_scenarios: true,
+    label: trackLabel(track)
+  };
+  const r = await apiCall(`/api/admin/program-settings/pathway_${track}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value })
+  });
+  if (r && !r.error) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#2e7d32;">Saved.</span>';
+    // Invalidate cache so the next page load reads fresh
+    NUMA_ENROLL.pathwayCache = null;
+  } else {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#c62828;">Save failed: ' + ((r && r.error) || 'error') + '</span>';
+  }
+}
+window.savePathway = savePathway;
+
+// Add a "Certification Pathways" card on the admin home page
+(function addPathwaysAdminCard() {
+  // Patch the admin overview card list by appending after render
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  window.renderAdminContent = function() {
+    const html = _orig.apply(this, arguments);
+    setTimeout(() => {
+      const grid = document.querySelector('.admin-overview-grid');
+      if (!grid || grid.dataset.pathwaysCard === '1') return;
+      grid.dataset.pathwaysCard = '1';
+      const card = document.createElement('div');
+      card.className = 'admin-overview-card';
+      card.onclick = () => navigate('admin', { view: 'pathways' });
+      card.innerHTML = '<div class="admin-overview-icon"><i class="fa-solid fa-route"></i></div>'
+        + '<h3>Certification Pathways</h3>'
+        + '<p>Set required modules and hours for Mat / Reformer / Both</p>';
+      grid.appendChild(card);
+    }, 0);
+    return html;
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
+
+// ============================================================
+// STUDENT-SIDE: Filter modules to only show what their track requires
+// ------------------------------------------------------------
+// If the logged-in student has a program_track and the pathway for that
+// track has a non-empty required_module_ids, hide modules not in that list.
+// This is a presentation-layer filter applied on the dashboard.
+// ============================================================
+
+let _studentPathwayCache = null;
+async function getStudentPathway() {
+  if (_studentPathwayCache !== null) return _studentPathwayCache;
+  try {
+    const me = await apiCall('/api/auth/me');
+    if (!me || me.error || !me.program_track) {
+      _studentPathwayCache = { track: null };
+      return _studentPathwayCache;
+    }
+    const all = await fetchPathways();
+    const p = all[me.program_track] || null;
+    _studentPathwayCache = {
+      track: me.program_track,
+      required_module_ids: (p && p.required_module_ids) || [],
+      hour_requirements: (p && p.hour_requirements) || null,
+      label: (p && p.label) || trackLabel(me.program_track),
+      tuition_status: me.tuition_status
+    };
+  } catch (e) {
+    _studentPathwayCache = { track: null };
+  }
+  return _studentPathwayCache;
+}
+
+// Re-fetch pathway when login changes
+(function wrapLoginToResetPathway() {
+  if (typeof handleLogin !== 'function') return;
+  const _orig = handleLogin;
+  window.handleLogin = async function(...args) {
+    _studentPathwayCache = null;
+    return await _orig.apply(this, args);
+  };
+  handleLogin = window.handleLogin;
+})();
+

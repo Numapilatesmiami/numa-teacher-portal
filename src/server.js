@@ -145,7 +145,8 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
     res.json({
       token,
-      user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email, role: user.role }
+      user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email, role: user.role,
+              program_track: user.program_track, tuition_status: user.tuition_status }
     });
   } catch (err) {
     console.error(err);
@@ -155,7 +156,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const result = await pool.query(
-    'SELECT id, username, full_name, email, role, created_at FROM users WHERE id = $1',
+    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid FROM users WHERE id = $1',
     [req.user.id]
   );
   res.json(result.rows[0] || null);
@@ -343,6 +344,7 @@ app.get('/api/final-exam', authRequired, async (req, res) => {
 app.get('/api/admin/students', adminRequired, async (_req, res) => {
   const result = await pool.query(`
     SELECT u.id, u.username, u.full_name, u.email, u.enrollment_code, u.created_at,
+      u.program_track, u.tuition_status, u.tuition_total, u.tuition_amount_paid, u.tuition_notes,
       (SELECT COUNT(*) FROM quiz_scores WHERE user_id = u.id) AS quiz_count,
       (SELECT COUNT(*) FROM scenarios WHERE user_id = u.id) AS scenario_count,
       (SELECT COALESCE(SUM(hours), 0) FROM practice_hours WHERE user_id = u.id) AS total_hours,
@@ -354,8 +356,40 @@ app.get('/api/admin/students', adminRequired, async (_req, res) => {
   res.json(result.rows);
 });
 
+// Admin: update enrollment metadata for one student
+app.patch('/api/admin/students/:id', adminRequired, async (req, res) => {
+  const { program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes, full_name, email } = req.body || {};
+  // Validate program_track if provided
+  const validTracks = ['mat', 'reformer', 'both', null, ''];
+  if (program_track !== undefined && !validTracks.includes(program_track)) {
+    return res.status(400).json({ error: 'Invalid program_track; must be one of: mat, reformer, both, or null' });
+  }
+  const validStatuses = ['unpaid', 'partial', 'paid', null, ''];
+  if (tuition_status !== undefined && !validStatuses.includes(tuition_status)) {
+    return res.status(400).json({ error: 'Invalid tuition_status' });
+  }
+  // Build dynamic SET clause for only the fields provided
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  if (program_track !== undefined) { sets.push(`program_track = $${i++}`); vals.push(program_track || null); }
+  if (tuition_status !== undefined) { sets.push(`tuition_status = $${i++}`); vals.push(tuition_status || 'unpaid'); }
+  if (tuition_total !== undefined) { sets.push(`tuition_total = $${i++}`); vals.push(tuition_total === '' ? null : tuition_total); }
+  if (tuition_amount_paid !== undefined) { sets.push(`tuition_amount_paid = $${i++}`); vals.push(tuition_amount_paid === '' ? 0 : tuition_amount_paid); }
+  if (tuition_notes !== undefined) { sets.push(`tuition_notes = $${i++}`); vals.push(tuition_notes || null); }
+  if (full_name !== undefined) { sets.push(`full_name = $${i++}`); vals.push(full_name); }
+  if (email !== undefined) { sets.push(`email = $${i++}`); vals.push(email); }
+  if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  sets.push(`updated_at = NOW()`);
+  vals.push(req.params.id);
+  const sql = `UPDATE users SET ${sets.join(', ')} WHERE id = $${i} AND role = 'student' RETURNING id, username, full_name, email, program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes`;
+  const result = await pool.query(sql, vals);
+  if (result.rowCount === 0) return res.status(404).json({ error: 'Student not found' });
+  res.json(result.rows[0]);
+});
+
 app.get('/api/admin/students/:id', adminRequired, async (req, res) => {
-  const userRes = await pool.query('SELECT id, username, full_name, email, enrollment_code, created_at FROM users WHERE id = $1', [req.params.id]);
+  const userRes = await pool.query('SELECT id, username, full_name, email, enrollment_code, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes FROM users WHERE id = $1', [req.params.id]);
   if (userRes.rowCount === 0) return res.status(404).json({ error: 'Not found' });
   const quizRes = await pool.query('SELECT * FROM quiz_scores WHERE user_id = $1 ORDER BY completed_at DESC', [req.params.id]);
   const scenRes = await pool.query('SELECT * FROM scenarios WHERE user_id = $1 ORDER BY submitted_at DESC', [req.params.id]);
@@ -1009,6 +1043,32 @@ app.put('/api/admin/program-settings/:key', adminRequired, async (req, res) => {
           return res.status(400).json({ error: `${f} must be a non-negative number` });
         }
         value[f] = n;
+      }
+    }
+
+    // Validation for pathway_* keys (one per program track)
+    if (key.startsWith('pathway_')) {
+      if (!value || typeof value !== 'object') {
+        return res.status(400).json({ error: 'pathway must be an object' });
+      }
+      if (value.required_module_ids !== undefined && !Array.isArray(value.required_module_ids)) {
+        return res.status(400).json({ error: 'required_module_ids must be an array' });
+      }
+      // Normalize all IDs to strings
+      if (Array.isArray(value.required_module_ids)) {
+        value.required_module_ids = value.required_module_ids.map(String);
+      }
+      // hour_requirements override (null = inherit global)
+      if (value.hour_requirements && typeof value.hour_requirements === 'object') {
+        for (const f of ['observation', 'teaching', 'personal', 'total']) {
+          if (value.hour_requirements[f] !== undefined) {
+            const n = Number(value.hour_requirements[f]);
+            if (!Number.isFinite(n) || n < 0) {
+              return res.status(400).json({ error: `hour_requirements.${f} must be a non-negative number` });
+            }
+            value.hour_requirements[f] = n;
+          }
+        }
       }
     }
 

@@ -242,7 +242,35 @@ export async function initDatabase() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
       ALTER TABLE sections ADD COLUMN IF NOT EXISTS featured_image TEXT;
       ALTER TABLE sections ADD COLUMN IF NOT EXISTS video_url TEXT;
+
+      -- Enrollment metadata: program track + tuition
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS program_track TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_status TEXT DEFAULT 'unpaid';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_total NUMERIC(10,2);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_amount_paid NUMERIC(10,2) DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_notes TEXT;
     `);
+
+    // Seed default pathway rows for each track (all modules required, hours = global).
+    // Stored as one row per track in program_settings under keys 'pathway_mat',
+    // 'pathway_reformer', 'pathway_both'. Default value: { required_module_ids: [], hour_requirements: null }.
+    // required_module_ids = [] means "all modules" (interpreted at render time).
+    for (const track of ['mat', 'reformer', 'both']) {
+      await client.query(
+        `INSERT INTO program_settings (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO NOTHING`,
+        [`pathway_${track}`, JSON.stringify({
+          required_module_ids: [],   // empty = all modules required
+          hour_requirements: null,   // null = inherit global hour_requirements
+          requires_final_exam: true,
+          requires_scenarios: true,
+          label: track === 'mat' ? 'Mat Certification'
+               : track === 'reformer' ? 'Reformer Certification'
+               : 'Mat + Reformer Certification'
+        })]
+      );
+    }
 
     console.log('[db] Database initialized successfully');
   } finally {
