@@ -1139,6 +1139,22 @@ app.get('/api/admin/module-homework-summary', adminRequired, async (_req, res) =
 });
 
 // Admin: lightweight list of which sections have a quiz (for UI badges)
+// Public (auth required): list of section IDs that have at least one question.
+// Used by the student module page to show "Take Section Quiz" only when applicable.
+app.get('/api/sections-with-quiz', authRequired, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT section_id
+         FROM section_quizzes
+        WHERE jsonb_array_length(COALESCE(questions, '[]'::jsonb)) > 0`
+    );
+    res.json(result.rows.map(r => r.section_id));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load' });
+  }
+});
+
 app.get('/api/admin/section-quizzes-summary', adminRequired, async (_req, res) => {
   try {
     const result = await pool.query(

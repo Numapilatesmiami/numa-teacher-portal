@@ -3730,6 +3730,8 @@ async function saveSectionQuiz(sectionId) {
     })
   });
   if (status) status.textContent = out ? 'Saved.' : 'Save failed.';
+  // Refresh cache so student-side quiz button visibility updates immediately
+  if (typeof loadSectionsWithQuiz === 'function') loadSectionsWithQuiz(true);
 }
 
 async function deleteSectionQuiz(sectionId) {
@@ -3737,6 +3739,7 @@ async function deleteSectionQuiz(sectionId) {
   await apiCall(`/api/admin/sections/${encodeURIComponent(sectionId)}/quiz`, { method: 'DELETE' });
   NUMA_NEW.sectionQuizCache[sectionId] = { title: 'Section Quiz', passing_score: 70, is_optional: true, questions: [] };
   renderSectionQuizEditorBody(sectionId, NUMA_NEW.sectionQuizCache[sectionId]);
+  if (typeof loadSectionsWithQuiz === 'function') loadSectionsWithQuiz(true);
 }
 
 // =============================================================================
@@ -4018,6 +4021,20 @@ function escapeAttr(s) {
 // =============================================================================
 // ===== Patch module page: "Mark Complete" + "Take Section Quiz" buttons =====
 // =============================================================================
+// Cache of section IDs that actually have a quiz with questions.
+window.NUMA_SECTIONS_WITH_QUIZ = window.NUMA_SECTIONS_WITH_QUIZ || null;
+async function loadSectionsWithQuiz(force) {
+  if (!force && window.NUMA_SECTIONS_WITH_QUIZ) return window.NUMA_SECTIONS_WITH_QUIZ;
+  try {
+    const list = await apiCall('/api/sections-with-quiz');
+    window.NUMA_SECTIONS_WITH_QUIZ = new Set(Array.isArray(list) ? list.map(String) : []);
+  } catch (_) {
+    window.NUMA_SECTIONS_WITH_QUIZ = new Set();
+  }
+  return window.NUMA_SECTIONS_WITH_QUIZ;
+}
+window.loadSectionsWithQuiz = loadSectionsWithQuiz;
+
 (function patchModulePage() {
   if (typeof renderModulePage !== 'function') return;
   const _orig = renderModulePage;
@@ -4026,19 +4043,34 @@ function escapeAttr(s) {
     const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => m.id === moduleId) : null;
     const section = mod && (sectionId ? mod.sections.find(s => s.id === sectionId) : mod.sections[0]);
     if (!section || section.isQuiz) return html;
-    // Inject buttons below the section content
-    const buttons = `
-      <div class="card slide-up" style="margin-top:16px;">
+    const isAdmin = !!APP.currentUser?.isAdmin;
+    // Only render the quiz button if this section has a quiz with questions.
+    // We check the cached set synchronously; if cache is empty, kick off a load
+    // and re-render the buttons in place once it resolves.
+    const cache = window.NUMA_SECTIONS_WITH_QUIZ;
+    const hasQuizNow = cache ? cache.has(String(section.id)) : false;
+    const btnsId = 'sec-action-btns-' + section.id;
+    const buildBtns = (hasQuiz) => `
+      <div class="card slide-up" id="${btnsId}" style="margin-top:16px;">
         <div class="card-body" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-primary" onclick="markSectionCompleteUI('${section.id}', this)">
             <i class="fa-solid fa-check"></i> Mark Section Complete
           </button>
-          <button class="btn btn-secondary" onclick="openSectionQuiz('${section.id}')">
-            <i class="fa-solid fa-clipboard-question"></i> Take Section Quiz (if any)
-          </button>
-          ${APP.currentUser?.isAdmin ? `<button class="btn btn-ghost" onclick="navigate('admin',{view:'section-quiz',sectionId:'${section.id}',moduleId:${moduleId}})"><i class="fa-solid fa-pen"></i> Edit Section Quiz</button>` : ''}
+          ${hasQuiz ? `<button class="btn btn-secondary" onclick="openSectionQuiz('${section.id}')">
+            <i class="fa-solid fa-clipboard-question"></i> Take Section Quiz
+          </button>` : ''}
+          ${isAdmin ? `<button class="btn btn-ghost" onclick="navigate('admin',{view:'section-quiz',sectionId:'${section.id}',moduleId:${moduleId}})"><i class="fa-solid fa-pen"></i> ${hasQuiz ? 'Edit' : 'Add'} Section Quiz</button>` : ''}
         </div>
       </div>`;
+    const buttons = buildBtns(hasQuizNow);
+    // Kick off cache load + re-render if needed
+    if (!cache) {
+      setTimeout(async () => {
+        const set = await loadSectionsWithQuiz();
+        const el = document.getElementById(btnsId);
+        if (el) el.outerHTML = buildBtns(set.has(String(section.id)));
+      }, 0);
+    }
     // Insert before the module-nav-buttons (next/prev) or at end
     if (html.includes('module-nav-buttons')) {
       html = html.replace('module-nav-buttons', buttons + '<div class="module-nav-buttons" data-marker="x"');
