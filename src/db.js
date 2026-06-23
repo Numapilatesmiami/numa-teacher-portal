@@ -224,6 +224,54 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_forum_posts_created ON forum_posts(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_forum_posts_parent ON forum_posts(parent_id);
+
+      -- ===== HOMEWORK =====
+      -- One homework prompt per MODULE (lives at the end of the module, like
+      -- the module quiz). Admin sets the prompt and whether it is required.
+      CREATE TABLE IF NOT EXISTS module_homework (
+        module_id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT NOT NULL,
+        is_required BOOLEAN DEFAULT TRUE,
+        max_size_mb INTEGER DEFAULT 500,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      -- Student homework submissions. One latest video per (module, student);
+      -- the student can replace it until it has been graded.
+      CREATE TABLE IF NOT EXISTS homework_submissions (
+        id SERIAL PRIMARY KEY,
+        module_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        video_url TEXT NOT NULL,
+        original_filename TEXT,
+        mime_type TEXT,
+        size_bytes BIGINT,
+        student_notes TEXT,
+        status TEXT NOT NULL DEFAULT 'submitted', -- submitted | approved | needs_revision
+        admin_feedback TEXT,
+        reviewed_at TIMESTAMPTZ,
+        reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        submitted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (module_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_homework_submissions_user ON homework_submissions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_homework_submissions_module ON homework_submissions(module_id);
+      CREATE INDEX IF NOT EXISTS idx_homework_submissions_status ON homework_submissions(status, submitted_at DESC);
+
+      -- Admin comments on a homework submission (post-grade feedback thread).
+      CREATE TABLE IF NOT EXISTS homework_comments (
+        id SERIAL PRIMARY KEY,
+        submission_id INTEGER NOT NULL REFERENCES homework_submissions(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        author_role TEXT NOT NULL, -- 'admin' | 'student'
+        body TEXT NOT NULL,
+        timestamp_seconds NUMERIC(10,2), -- optional video timecode the comment refers to
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_homework_comments_submission ON homework_comments(submission_id, created_at);
     `);
 
     // Seed default enrollment codes if table is empty

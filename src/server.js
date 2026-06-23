@@ -44,6 +44,21 @@ const upload = multer({
   }
 });
 
+// Separate uploader for homework videos: accepts any common video file type, up to 500MB.
+const HOMEWORK_MAX_BYTES = 500 * 1024 * 1024;
+const videoUpload = multer({
+  storage,
+  limits: { fileSize: HOMEWORK_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const mt = (file.mimetype || '').toLowerCase();
+    const okMime = mt.startsWith('video/') || mt === 'application/octet-stream';
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const okExt = ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.3gp', '.mpeg', '.mpg', '.qt', '.hevc'].includes(ext);
+    if (okMime || okExt) cb(null, true);
+    else cb(new Error('Please upload a standard video file (MP4, MOV, WebM, MKV, AVI, etc.)'));
+  }
+});
+
 app.use(cors({ origin: '*', credentials: false }));
 app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, { maxAge: '7d' }));
@@ -701,6 +716,424 @@ app.delete('/api/admin/pathways/:slug', adminRequired, async (req, res) => {
     res.json({ ok: true, unassigned: n });
   } catch (e) {
     console.error('DELETE pathways error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// =====================================================================
+// HOMEWORK
+// ---------------------------------------------------------------------
+// Each MODULE can have one homework prompt (assigned at the end of the
+// module, like the module quiz). Students upload a video file as their
+// submission and may REPLACE it any time until it has been graded.
+// Once admin marks it approved or needs_revision the video is locked.
+// =====================================================================
+
+function homeworkIsLocked(status) {
+  return status === 'approved' || status === 'needs_revision';
+}
+
+function safeUnlinkUpload(filename) {
+  try {
+    if (!filename || filename.includes('..') || filename.includes('/')) return;
+    const full = path.join(UPLOAD_ROOT, filename);
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+  } catch (e) { console.warn('[homework] cleanup failed', e.message); }
+}
+
+function filenameFromUrl(videoUrl) {
+  return (videoUrl || '').replace(/^\/uploads\//, '');
+}
+
+// Public: student fetches the homework prompt + their own current submission for a module
+app.get('/api/modules/:moduleId/homework', authRequired, async (req, res) => {
+  try {
+    const hw = await pool.query(
+      `SELECT module_id, title, description, is_required, max_size_mb, updated_at
+         FROM module_homework WHERE module_id = $1`,
+      [req.params.moduleId]
+    );
+    if (hw.rowCount === 0) return res.json({ homework: null, submission: null });
+    const sub = await pool.query(
+      `SELECT id, video_url, original_filename, mime_type, size_bytes,
+              student_notes, status, admin_feedback, reviewed_at, submitted_at
+         FROM homework_submissions
+        WHERE module_id = $1 AND user_id = $2`,
+      [req.params.moduleId, req.user.id]
+    );
+    let comments = [];
+    if (sub.rowCount > 0) {
+      const c = await pool.query(
+        `SELECT hc.id, hc.author_id, hc.author_role, hc.body, hc.timestamp_seconds,
+                hc.created_at, u.full_name, u.username
+           FROM homework_comments hc
+           JOIN users u ON u.id = hc.author_id
+          WHERE hc.submission_id = $1
+          ORDER BY hc.created_at ASC`,
+        [sub.rows[0].id]
+      );
+      comments = c.rows;
+    }
+    res.json({
+      homework: hw.rows[0],
+      submission: sub.rowCount === 0 ? null : { ...sub.rows[0], comments }
+    });
+  } catch (e) {
+    console.error('GET module homework error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Student: submit OR replace a homework video for a module.
+// Replacement is only allowed while status is still 'submitted' (not graded).
+app.post('/api/modules/:moduleId/homework/submissions', authRequired, (req, res) => {
+  videoUpload.single('video')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `Video is too large. Max size is ${Math.round(HOMEWORK_MAX_BYTES / 1024 / 1024)} MB.` });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No video file uploaded' });
+    try {
+      const hw = await pool.query('SELECT 1 FROM module_homework WHERE module_id = $1', [req.params.moduleId]);
+      if (hw.rowCount === 0) {
+        safeUnlinkUpload(req.file.filename);
+        return res.status(400).json({ error: 'This module does not have homework assigned.' });
+      }
+      // Check for an existing submission
+      const existing = await pool.query(
+        `SELECT id, video_url, status FROM homework_submissions WHERE module_id = $1 AND user_id = $2`,
+        [req.params.moduleId, req.user.id]
+      );
+      const studentNotes = (req.body && req.body.student_notes) ? String(req.body.student_notes).slice(0, 2000) : null;
+      const publicUrl = `/uploads/${req.file.filename}`;
+      if (existing.rowCount > 0) {
+        const row = existing.rows[0];
+        if (homeworkIsLocked(row.status)) {
+          // Submission has been graded — cannot replace.
+          safeUnlinkUpload(req.file.filename);
+          return res.status(403).json({
+            error: 'Your submission has already been graded and can no longer be replaced.'
+          });
+        }
+        // Replace: delete the previous file on disk, then update the row.
+        safeUnlinkUpload(filenameFromUrl(row.video_url));
+        const upd = await pool.query(
+          `UPDATE homework_submissions
+              SET video_url = $1, original_filename = $2, mime_type = $3,
+                  size_bytes = $4, student_notes = $5,
+                  status = 'submitted', admin_feedback = NULL,
+                  reviewed_at = NULL, reviewed_by = NULL,
+                  submitted_at = NOW()
+            WHERE id = $6
+            RETURNING id, video_url, original_filename, mime_type, size_bytes,
+                      student_notes, status, admin_feedback, reviewed_at, submitted_at`,
+          [
+            publicUrl,
+            req.file.originalname || null,
+            req.file.mimetype || null,
+            req.file.size || null,
+            studentNotes,
+            row.id
+          ]
+        );
+        return res.json({ replaced: true, submission: upd.rows[0] });
+      }
+      // New submission
+      const ins = await pool.query(
+        `INSERT INTO homework_submissions
+           (module_id, user_id, video_url, original_filename, mime_type, size_bytes, student_notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, video_url, original_filename, mime_type, size_bytes,
+                   student_notes, status, admin_feedback, reviewed_at, submitted_at`,
+        [
+          req.params.moduleId,
+          req.user.id,
+          publicUrl,
+          req.file.originalname || null,
+          req.file.mimetype || null,
+          req.file.size || null,
+          studentNotes
+        ]
+      );
+      res.json({ replaced: false, submission: ins.rows[0] });
+    } catch (e) {
+      console.error('POST homework submission error', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+});
+
+// Student: delete their OWN submission (only while not graded)
+app.delete('/api/modules/:moduleId/homework/submission', authRequired, async (req, res) => {
+  try {
+    const row = await pool.query(
+      `SELECT id, video_url, status FROM homework_submissions WHERE module_id = $1 AND user_id = $2`,
+      [req.params.moduleId, req.user.id]
+    );
+    if (row.rowCount === 0) return res.status(404).json({ error: 'No submission found.' });
+    if (homeworkIsLocked(row.rows[0].status)) {
+      return res.status(403).json({ error: 'Your submission has been graded and can no longer be deleted.' });
+    }
+    await pool.query('DELETE FROM homework_submissions WHERE id = $1', [row.rows[0].id]);
+    safeUnlinkUpload(filenameFromUrl(row.rows[0].video_url));
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE own submission error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: get the homework prompt for a module (null if none)
+app.get('/api/admin/modules/:moduleId/homework', adminRequired, async (req, res) => {
+  try {
+    const hw = await pool.query(
+      `SELECT module_id, title, description, is_required, max_size_mb, updated_at
+         FROM module_homework WHERE module_id = $1`,
+      [req.params.moduleId]
+    );
+    res.json(hw.rowCount === 0 ? null : hw.rows[0]);
+  } catch (e) {
+    console.error('GET admin module homework error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: create or update the homework prompt for a module (upsert)
+app.put('/api/admin/modules/:moduleId/homework', adminRequired, async (req, res) => {
+  try {
+    const { title, description, is_required, max_size_mb } = req.body || {};
+    if (!description || !String(description).trim()) {
+      return res.status(400).json({ error: 'Homework description is required.' });
+    }
+    const maxMb = Math.max(10, Math.min(2000, parseInt(max_size_mb, 10) || 500));
+    const result = await pool.query(
+      `INSERT INTO module_homework (module_id, title, description, is_required, max_size_mb, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (module_id)
+       DO UPDATE SET title = EXCLUDED.title,
+                     description = EXCLUDED.description,
+                     is_required = EXCLUDED.is_required,
+                     max_size_mb = EXCLUDED.max_size_mb,
+                     updated_by = EXCLUDED.updated_by,
+                     updated_at = NOW()
+       RETURNING module_id, title, description, is_required, max_size_mb, updated_at`,
+      [
+        req.params.moduleId,
+        title ? String(title).slice(0, 200) : null,
+        String(description).trim(),
+        is_required !== false,
+        maxMb,
+        req.user.id
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PUT admin module homework error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: remove the homework prompt for a module (submissions kept by default)
+app.delete('/api/admin/modules/:moduleId/homework', adminRequired, async (req, res) => {
+  try {
+    const wipeSubs = req.query.wipe_submissions === 'true';
+    if (wipeSubs) {
+      const subs = await pool.query('SELECT video_url FROM homework_submissions WHERE module_id = $1', [req.params.moduleId]);
+      subs.rows.forEach(r => safeUnlinkUpload(filenameFromUrl(r.video_url)));
+      await pool.query('DELETE FROM homework_submissions WHERE module_id = $1', [req.params.moduleId]);
+    }
+    await pool.query('DELETE FROM module_homework WHERE module_id = $1', [req.params.moduleId]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE admin module homework error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: list ALL homework submissions across modules (with student + module info)
+app.get('/api/admin/homework-submissions', adminRequired, async (req, res) => {
+  try {
+    const status = req.query.status; // optional filter
+    const params = [];
+    let where = '';
+    if (status) { params.push(status); where = `WHERE hs.status = $${params.length}`; }
+    const result = await pool.query(
+      `SELECT hs.id, hs.module_id, hs.user_id, hs.video_url, hs.original_filename,
+              hs.mime_type, hs.size_bytes, hs.student_notes, hs.status, hs.admin_feedback,
+              hs.submitted_at, hs.reviewed_at,
+              u.username, u.full_name, u.email,
+              mh.title AS homework_title
+         FROM homework_submissions hs
+         JOIN users u ON u.id = hs.user_id
+         LEFT JOIN module_homework mh ON mh.module_id = hs.module_id
+         ${where}
+         ORDER BY hs.submitted_at DESC
+         LIMIT 500`,
+      params
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET admin homework submissions error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: list submissions for a single module
+app.get('/api/admin/modules/:moduleId/homework-submissions', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT hs.id, hs.user_id, hs.video_url, hs.original_filename, hs.mime_type,
+              hs.size_bytes, hs.student_notes, hs.status, hs.admin_feedback,
+              hs.submitted_at, hs.reviewed_at,
+              u.username, u.full_name, u.email
+         FROM homework_submissions hs
+         JOIN users u ON u.id = hs.user_id
+         WHERE hs.module_id = $1
+         ORDER BY hs.submitted_at DESC`,
+      [req.params.moduleId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET module submissions error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: update review status / feedback for one submission
+app.patch('/api/admin/homework-submissions/:id', adminRequired, async (req, res) => {
+  try {
+    const { status, admin_feedback } = req.body || {};
+    const validStatus = ['submitted', 'approved', 'needs_revision'];
+    if (status && !validStatus.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (status !== undefined) { sets.push(`status = $${i++}`); vals.push(status); }
+    if (admin_feedback !== undefined) { sets.push(`admin_feedback = $${i++}`); vals.push(admin_feedback); }
+    if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
+    sets.push(`reviewed_at = NOW()`);
+    sets.push(`reviewed_by = $${i++}`);
+    vals.push(req.user.id);
+    vals.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE homework_submissions SET ${sets.join(', ')} WHERE id = $${i}
+       RETURNING id, status, admin_feedback, reviewed_at`,
+      vals
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Submission not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('PATCH submission error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----- COMMENTS on a submission (admin grades, then both sides can comment) -----
+
+// Anyone with access to the submission can list its comments.
+// Students can only read comments on their own submissions; admins read any.
+app.get('/api/homework-submissions/:id/comments', authRequired, async (req, res) => {
+  try {
+    const sub = await pool.query('SELECT user_id FROM homework_submissions WHERE id = $1', [req.params.id]);
+    if (sub.rowCount === 0) return res.status(404).json({ error: 'Submission not found' });
+    if (req.user.role !== 'admin' && sub.rows[0].user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const result = await pool.query(
+      `SELECT hc.id, hc.author_id, hc.author_role, hc.body, hc.timestamp_seconds,
+              hc.created_at, u.full_name, u.username
+         FROM homework_comments hc
+         JOIN users u ON u.id = hc.author_id
+        WHERE hc.submission_id = $1
+        ORDER BY hc.created_at ASC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET comments error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Post a comment. Admin can comment any time AFTER the submission has been graded.
+// Students can comment on their own submission any time.
+app.post('/api/homework-submissions/:id/comments', authRequired, async (req, res) => {
+  try {
+    const { body, timestamp_seconds } = req.body || {};
+    if (!body || !String(body).trim()) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    const sub = await pool.query('SELECT user_id, status FROM homework_submissions WHERE id = $1', [req.params.id]);
+    if (sub.rowCount === 0) return res.status(404).json({ error: 'Submission not found' });
+    const row = sub.rows[0];
+    const isOwner = row.user_id === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+    if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Forbidden' });
+    if (isAdmin && !homeworkIsLocked(row.status)) {
+      return res.status(400).json({ error: 'Grade the submission first, then leave feedback comments.' });
+    }
+    const ts = timestamp_seconds == null || timestamp_seconds === '' ? null : Math.max(0, parseFloat(timestamp_seconds));
+    const result = await pool.query(
+      `INSERT INTO homework_comments (submission_id, author_id, author_role, body, timestamp_seconds)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, author_id, author_role, body, timestamp_seconds, created_at`,
+      [req.params.id, req.user.id, isAdmin ? 'admin' : 'student', String(body).trim().slice(0, 4000), Number.isFinite(ts) ? ts : null]
+    );
+    // Attach author info for the response
+    const u = await pool.query('SELECT full_name, username FROM users WHERE id = $1', [req.user.id]);
+    res.json({ ...result.rows[0], full_name: u.rows[0]?.full_name, username: u.rows[0]?.username });
+  } catch (e) {
+    console.error('POST comment error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete a comment (author or admin can remove)
+app.delete('/api/homework-comments/:id', authRequired, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT author_id FROM homework_comments WHERE id = $1', [req.params.id]);
+    if (row.rowCount === 0) return res.status(404).json({ error: 'Comment not found' });
+    if (req.user.role !== 'admin' && row.rows[0].author_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await pool.query('DELETE FROM homework_comments WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE comment error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: delete a submission (also removes the file on disk best-effort)
+app.delete('/api/admin/homework-submissions/:id', adminRequired, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT video_url FROM homework_submissions WHERE id = $1', [req.params.id]);
+    if (row.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    await pool.query('DELETE FROM homework_submissions WHERE id = $1', [req.params.id]);
+    safeUnlinkUpload(filenameFromUrl(row.rows[0].video_url));
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE submission error', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Summary endpoint: which modules have homework + pending counts (for UI badges)
+app.get('/api/admin/module-homework-summary', adminRequired, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT mh.module_id, mh.title, mh.is_required,
+              COUNT(hs.id) AS submission_count,
+              COUNT(hs.id) FILTER (WHERE hs.status = 'submitted') AS pending_count
+         FROM module_homework mh
+         LEFT JOIN homework_submissions hs ON hs.module_id = mh.module_id
+         GROUP BY mh.module_id, mh.title, mh.is_required`
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET homework summary error', e);
     res.status(500).json({ error: e.message });
   }
 });

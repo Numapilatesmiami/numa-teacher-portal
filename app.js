@@ -2357,6 +2357,14 @@ function renderModuleEditor(moduleId) {
       </div>
       <p class="text-muted" style="margin:0;">The required quiz students take at the end of this module (80% to pass). Edit individual questions, answer choices, and correct answers.</p>
     </div></div>
+
+    <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px;">
+        <h3 style="margin:0;"><i class="fa-solid fa-video"></i> Module-End Homework</h3>
+        <button class="btn btn-primary btn-sm" onclick="navigate('admin',{view:'moduleHomework',moduleId:'${moduleId}'})"><i class="fa-solid fa-pen"></i> Edit Homework &amp; View Submissions</button>
+      </div>
+      <p class="text-muted" style="margin:0;">Assign a video-upload homework at the end of this module. Mark it required or optional, then review and comment on each student's video.</p>
+    </div></div>
     `}
   `;
 }
@@ -3191,6 +3199,8 @@ async function markSectionComplete(sectionId, completed = true) {
     if (p.view === 'forum') return renderAdminForum();
     if (p.view === 'section-quiz') return renderAdminSectionQuizEditor();
     if (p.view === 'editModuleQuiz') return renderAdminModuleQuizEditor(p.moduleId);
+    if (p.view === 'moduleHomework') return renderAdminModuleHomework(p.moduleId);
+    if (p.view === 'homework-inbox') return renderAdminHomeworkInbox();
     if (p.view === 'program-settings') return renderProgramSettingsEditor();
     return _origAdmin();
   };
@@ -5572,3 +5582,525 @@ async function getStudentPathway() {
   handleLogin = window.handleLogin;
 })();
 
+
+// ============================================================
+// HOMEWORK (module-end video assignment)
+// ------------------------------------------------------------
+// Student: sees a homework card on the quiz section of each module
+// they can upload a video, replace it until graded, and read comments.
+// Admin: edits the prompt, reviews each submission, grades it, and
+// posts ongoing feedback comments after grading.
+// ============================================================
+
+const NUMA_HW = {
+  // Cache of per-module homework prompt + this student's submission
+  perModule: {}, // moduleId -> { homework, submission }
+  inbox: null
+};
+
+function _hwFmtBytes(n) {
+  if (n == null) return '';
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? mb.toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
+}
+function _hwStatusBadge(status) {
+  if (status === 'approved') return '<span style="background:#e8f5e9;color:#2e7d32;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"><i class="fa-solid fa-circle-check"></i> Approved</span>';
+  if (status === 'needs_revision') return '<span style="background:#fff3e0;color:#e65100;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"><i class="fa-solid fa-rotate-right"></i> Needs Revision</span>';
+  return '<span style="background:#e3f2fd;color:#1565c0;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"><i class="fa-solid fa-clock"></i> Pending Review</span>';
+}
+function _hwIsLocked(status) { return status === 'approved' || status === 'needs_revision'; }
+
+// ---- STUDENT: fetch & render the homework card on the quiz section ----
+async function loadStudentHomework(moduleId) {
+  const data = await apiCall('/api/modules/' + encodeURIComponent(moduleId) + '/homework');
+  if (data && !data.error) {
+    NUMA_HW.perModule[moduleId] = data;
+    return data;
+  }
+  return { homework: null, submission: null };
+}
+
+function renderStudentHomeworkCard(moduleId, data) {
+  if (!data || !data.homework) return '';
+  const hw = data.homework;
+  const sub = data.submission;
+  const maxMb = hw.max_size_mb || 500;
+  const reqBadge = hw.is_required
+    ? '<span style="background:#fce4ec;color:#ad1457;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;margin-left:8px;">Required</span>'
+    : '<span style="background:#f3e5f5;color:#6a1b9a;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;margin-left:8px;">Optional</span>';
+  let body = '';
+  if (sub) {
+    const locked = _hwIsLocked(sub.status);
+    body = `
+      <div style="background:#fafaf7;border:1px solid #e6dfd1;border-radius:10px;padding:14px;margin-top:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div><strong>Your submission</strong> &middot; <span class="text-muted text-sm">${new Date(sub.submitted_at).toLocaleString()}</span></div>
+          ${_hwStatusBadge(sub.status)}
+        </div>
+        <video controls preload="metadata" style="width:100%;max-height:420px;margin-top:10px;border-radius:8px;background:#000;">
+          <source src="${escapeAttr(sub.video_url)}" type="${escapeAttr(sub.mime_type || 'video/mp4')}">
+          Your browser cannot play this video. <a href="${escapeAttr(sub.video_url)}" target="_blank">Download it.</a>
+        </video>
+        <div class="text-muted text-sm" style="margin-top:6px;">${escapeHtml(sub.original_filename || '')} &middot; ${_hwFmtBytes(sub.size_bytes)}</div>
+        ${sub.student_notes ? `<div style="margin-top:8px;"><em>Your notes:</em> ${escapeHtml(sub.student_notes)}</div>` : ''}
+        ${sub.admin_feedback ? `<div style="margin-top:10px;padding:10px;background:#fff;border-left:3px solid #A38D78;border-radius:6px;"><strong>Instructor feedback:</strong><br>${escapeHtml(sub.admin_feedback)}</div>` : ''}
+        <div id="hw-comments-${sub.id}" style="margin-top:12px;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          ${locked
+            ? '<span class="text-muted text-sm"><i class="fa-solid fa-lock"></i> This submission has been graded. The video is locked, but you can still read instructor comments.</span>'
+            : `<button class="btn btn-secondary btn-sm" onclick="studentChangeHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-rotate"></i> Replace Video</button>
+               <button class="btn btn-secondary btn-sm" onclick="studentDeleteHomework('${escapeAttr(moduleId)}')" style="color:#c62828;border-color:#c62828;"><i class="fa-solid fa-trash"></i> Delete Submission</button>`}
+        </div>
+      </div>`;
+  } else {
+    body = `<div style="margin-top:14px;">
+        <input type="file" id="hw-file-${escapeAttr(moduleId)}" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg" style="display:block;margin-bottom:8px;">
+        <textarea id="hw-notes-${escapeAttr(moduleId)}" rows="2" placeholder="Optional notes for your instructor" class="form-control" style="margin-bottom:8px;"></textarea>
+        <button class="btn btn-primary" onclick="studentUploadHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-upload"></i> Upload Video</button>
+        <div id="hw-progress-${escapeAttr(moduleId)}" class="text-muted text-sm" style="margin-top:8px;"></div>
+      </div>`;
+  }
+  return `
+    <div class="card mb-3" style="border-left:4px solid #A38D78;margin-top:24px;">
+      <div class="card-body">
+        <h3 style="margin-top:0;"><i class="fa-solid fa-video"></i> Homework ${reqBadge}</h3>
+        ${hw.title ? `<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(hw.title)}</div>` : ''}
+        <div style="white-space:pre-wrap;">${escapeHtml(hw.description)}</div>
+        <div class="text-muted text-sm" style="margin-top:8px;">Upload any standard video file (MP4, MOV, WebM, MKV, etc.) up to ${maxMb} MB.</div>
+        ${body}
+      </div>
+    </div>
+    <script>setTimeout(function(){ if (window.renderHomeworkCommentsThread) renderHomeworkCommentsThread(${sub ? sub.id : 'null'}); }, 0);</script>`;
+}
+
+async function studentUploadHomework(moduleId) {
+  const fileInput = document.getElementById('hw-file-' + moduleId);
+  const notesEl = document.getElementById('hw-notes-' + moduleId);
+  const status = document.getElementById('hw-progress-' + moduleId);
+  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+    if (status) status.innerHTML = '<span style="color:#c62828;">Please choose a video file first.</span>';
+    return;
+  }
+  const file = fileInput.files[0];
+  const fd = new FormData();
+  fd.append('video', file);
+  if (notesEl && notesEl.value) fd.append('student_notes', notesEl.value);
+  if (status) status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading ' + _hwFmtBytes(file.size) + '...';
+  try {
+    const url = (API_BASE || '') + '/api/modules/' + encodeURIComponent(moduleId) + '/homework/submissions';
+    const token = localStorage.getItem('numa_token');
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+      body: fd
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (status) status.innerHTML = '<span style="color:#c62828;">' + escapeHtml(j.error || ('Upload failed (' + res.status + ')')) + '</span>';
+      return;
+    }
+    if (status) status.innerHTML = '<span style="color:#2e7d32;">Uploaded.</span>';
+    NUMA_HW.perModule[moduleId] = null;
+    // Re-render the module page
+    if (typeof navigate === 'function' && APP.viewParams) {
+      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
+    }
+  } catch (e) {
+    if (status) status.innerHTML = '<span style="color:#c62828;">' + escapeHtml(e.message) + '</span>';
+  }
+}
+window.studentUploadHomework = studentUploadHomework;
+
+async function studentChangeHomework(moduleId) {
+  // Replace flow: show the upload UI again
+  const card = document.getElementById('hw-comments-' + (NUMA_HW.perModule[moduleId]?.submission?.id || ''))?.closest('.card-body');
+  if (!card) return;
+  // Simpler: prompt for a file via a hidden input
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg';
+  input.onchange = async () => {
+    if (!input.files || !input.files[0]) return;
+    const notes = prompt('Optional notes for your instructor (leave blank to skip):', '');
+    const fd = new FormData();
+    fd.append('video', input.files[0]);
+    if (notes) fd.append('student_notes', notes);
+    const token = localStorage.getItem('numa_token');
+    const res = await fetch((API_BASE || '') + '/api/modules/' + encodeURIComponent(moduleId) + '/homework/submissions', {
+      method: 'POST',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+      body: fd
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(j.error || 'Upload failed.'); return; }
+    NUMA_HW.perModule[moduleId] = null;
+    if (typeof navigate === 'function' && APP.viewParams) {
+      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
+    }
+  };
+  input.click();
+}
+window.studentChangeHomework = studentChangeHomework;
+
+async function studentDeleteHomework(moduleId) {
+  if (!confirm('Delete your homework submission? You can re-upload anytime before it is graded.')) return;
+  const r = await apiCall('/api/modules/' + encodeURIComponent(moduleId) + '/homework/submission', { method: 'DELETE' });
+  if (r && !r.error) {
+    NUMA_HW.perModule[moduleId] = null;
+    if (typeof navigate === 'function' && APP.viewParams) {
+      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
+    }
+  } else {
+    alert((r && r.error) || 'Could not delete submission.');
+  }
+}
+window.studentDeleteHomework = studentDeleteHomework;
+
+// Render comments thread under a student's submission (or admin's submission view)
+async function renderHomeworkCommentsThread(submissionId, mountId) {
+  if (!submissionId) return;
+  const mount = document.getElementById(mountId || ('hw-comments-' + submissionId));
+  if (!mount) return;
+  const comments = await apiCall('/api/homework-submissions/' + submissionId + '/comments');
+  if (!Array.isArray(comments)) { mount.innerHTML = ''; return; }
+  const isAdmin = APP.currentUser && APP.currentUser.role === 'admin';
+  const list = comments.map(c => {
+    const isMine = APP.currentUser && c.author_id === APP.currentUser.id;
+    const who = c.full_name || c.username || 'User';
+    const ts = c.timestamp_seconds != null ? ` <span class="text-muted text-sm">@ ${Math.floor(c.timestamp_seconds/60)}:${String(Math.floor(c.timestamp_seconds%60)).padStart(2,'0')}</span>` : '';
+    const bg = c.author_role === 'admin' ? '#fff8ec' : '#f5f5f5';
+    const border = c.author_role === 'admin' ? '#A38D78' : '#bdbdbd';
+    return `<div style="background:${bg};border-left:3px solid ${border};padding:10px;border-radius:6px;margin-top:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div><strong>${escapeHtml(who)}</strong> ${c.author_role === 'admin' ? '<span style="font-size:11px;background:#A38D78;color:#fff;padding:2px 6px;border-radius:8px;margin-left:4px;">Instructor</span>' : ''}${ts}</div>
+        <div class="text-muted text-sm">${new Date(c.created_at).toLocaleString()}</div>
+      </div>
+      <div style="margin-top:6px;white-space:pre-wrap;">${escapeHtml(c.body)}</div>
+      ${(isMine || isAdmin) ? `<button class="btn btn-ghost btn-sm" onclick="deleteHomeworkComment(${c.id}, ${submissionId})" style="margin-top:4px;color:#c62828;"><i class="fa-solid fa-trash"></i></button>` : ''}
+    </div>`;
+  }).join('');
+  // Decide who can post:
+  // - Admin: only after grading (server enforces, but we mirror the UI)
+  // - Student (owner): anytime if they have access (server enforces)
+  const sub = (Object.values(NUMA_HW.perModule).find(d => d && d.submission && d.submission.id === submissionId) || {}).submission;
+  const subStatusFromList = (NUMA_HW.inbox || []).find(s => s.id === submissionId)?.status;
+  const status = sub?.status || subStatusFromList;
+  const adminCanPost = isAdmin && _hwIsLocked(status);
+  const studentCanPost = !isAdmin; // server checks ownership
+  const composer = (adminCanPost || studentCanPost) ? `
+    <div style="margin-top:10px;">
+      <textarea id="hw-comment-${submissionId}" rows="2" placeholder="${isAdmin ? 'Leave feedback on the video' : 'Reply to your instructor'}" class="form-control"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+        ${isAdmin ? `<input type="number" id="hw-comment-ts-${submissionId}" placeholder="Optional video time (seconds)" min="0" step="1" class="form-control" style="max-width:220px;">` : ''}
+        <button class="btn btn-primary btn-sm" onclick="postHomeworkComment(${submissionId})"><i class="fa-solid fa-paper-plane"></i> Post Comment</button>
+      </div>
+    </div>` : (isAdmin ? '<div class="text-muted text-sm" style="margin-top:8px;"><i class="fa-solid fa-info-circle"></i> Grade the submission first, then you can leave feedback comments.</div>' : '');
+  mount.innerHTML = `<div><h4 style="margin:0 0 6px 0;font-size:14px;"><i class="fa-solid fa-comments"></i> Feedback (${comments.length})</h4>${list || '<div class="text-muted text-sm">No comments yet.</div>'}${composer}</div>`;
+}
+window.renderHomeworkCommentsThread = renderHomeworkCommentsThread;
+
+async function postHomeworkComment(submissionId) {
+  const body = (document.getElementById('hw-comment-' + submissionId) || {}).value;
+  if (!body || !body.trim()) return;
+  const tsEl = document.getElementById('hw-comment-ts-' + submissionId);
+  const payload = { body };
+  if (tsEl && tsEl.value !== '') payload.timestamp_seconds = parseFloat(tsEl.value);
+  const r = await apiCall('/api/homework-submissions/' + submissionId + '/comments', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  if (r && !r.error) {
+    renderHomeworkCommentsThread(submissionId);
+  } else {
+    alert((r && r.error) || 'Could not post comment.');
+  }
+}
+window.postHomeworkComment = postHomeworkComment;
+
+async function deleteHomeworkComment(commentId, submissionId) {
+  if (!confirm('Delete this comment?')) return;
+  const r = await apiCall('/api/homework-comments/' + commentId, { method: 'DELETE' });
+  if (r && !r.error) renderHomeworkCommentsThread(submissionId);
+  else alert((r && r.error) || 'Could not delete.');
+}
+window.deleteHomeworkComment = deleteHomeworkComment;
+
+// Wrap renderModulePage so the homework card appears at the end of the
+// module's quiz section (mirroring where the module quiz lives).
+(function wrapModulePageForHomework() {
+  if (typeof renderModulePage !== 'function') return;
+  const _orig = renderModulePage;
+  window.renderModulePage = function(moduleId, sectionId) {
+    let html = _orig.call(this, moduleId, sectionId);
+    // Only inject on the quiz section
+    const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => String(m.id) === String(moduleId)) : null;
+    if (!mod) return html;
+    const currentSection = sectionId ? (mod.sections || []).find(s => s.id === sectionId) : (mod.sections || [])[0];
+    if (!currentSection || !currentSection.isQuiz) return html;
+    // Kick off async load + injection
+    setTimeout(async () => {
+      const data = await loadStudentHomework(moduleId);
+      if (!data || !data.homework) return;
+      const cardHtml = renderStudentHomeworkCard(moduleId, data);
+      // Insert before .section-nav-btns (right after the quiz block)
+      const navBar = document.querySelector('.section-nav-btns');
+      if (navBar) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = cardHtml;
+        navBar.parentNode.insertBefore(wrap, navBar);
+      }
+      // Re-render comments thread now that the DOM is in
+      if (data.submission && data.submission.id) {
+        renderHomeworkCommentsThread(data.submission.id);
+      }
+    }, 0);
+    return html;
+  };
+  renderModulePage = window.renderModulePage;
+})();
+
+// ============================================================
+// ADMIN: per-module homework editor + submissions reviewer
+// ============================================================
+
+function renderAdminModuleHomework(moduleId) {
+  setTimeout(() => loadAdminModuleHomework(moduleId), 0);
+  const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => String(m.id) === String(moduleId)) : null;
+  const title = mod ? `Module ${mod.id}: ${mod.title}` : `Module ${moduleId}`;
+  return `
+    <div class="breadcrumb fade-in">
+      <a href="#" onclick="navigate('admin',{view:'modules'});return false;">Modules</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <a href="#" onclick="navigate('admin',{view:'editModule',moduleId:'${escapeAttr(moduleId)}'});return false;">${escapeHtml(title)}</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>
+      <span>Homework</span>
+    </div>
+    <div class="page-header fade-in"><h1><i class="fa-solid fa-video"></i> Homework — ${escapeHtml(title)}</h1></div>
+    <div id="hw-editor"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>
+    <div id="hw-submissions" style="margin-top:20px;"></div>`;
+}
+
+async function loadAdminModuleHomework(moduleId) {
+  const [hw, subs] = await Promise.all([
+    apiCall('/api/admin/modules/' + encodeURIComponent(moduleId) + '/homework'),
+    apiCall('/api/admin/modules/' + encodeURIComponent(moduleId) + '/homework-submissions')
+  ]);
+  renderAdminHomeworkEditor(moduleId, hw && !hw.error ? hw : null);
+  renderAdminHomeworkSubmissionsList(moduleId, Array.isArray(subs) ? subs : []);
+}
+
+function renderAdminHomeworkEditor(moduleId, hw) {
+  const target = document.getElementById('hw-editor');
+  if (!target) return;
+  const title = hw?.title || '';
+  const desc = hw?.description || '';
+  const isReq = hw ? hw.is_required !== false : true;
+  const maxMb = hw?.max_size_mb || 500;
+  target.innerHTML = `
+    <div class="card"><div class="card-body">
+      <h3 style="margin-top:0;"><i class="fa-solid fa-pen"></i> Homework Prompt</h3>
+      <div class="form-group">
+        <label><strong>Title (optional)</strong></label>
+        <input type="text" id="hw-title" class="form-control" value="${escapeAttr(title)}" placeholder="e.g. Teach a 10-minute mat warm-up">
+      </div>
+      <div class="form-group">
+        <label><strong>What are you asking students to record?</strong></label>
+        <textarea id="hw-desc" rows="5" class="form-control" placeholder="Describe the assignment in detail. e.g. Film yourself cueing 5 mat exercises with clear verbal cues, lateral breathing, and proper alignment. 5–10 minutes.">${escapeHtml(desc)}</textarea>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="hw-required" ${isReq ? 'checked' : ''}>
+          <span><strong>Required</strong> (uncheck to make this homework optional)</span>
+        </label>
+        <label>Max upload size (MB) <input type="number" min="10" max="2000" id="hw-max" class="form-control" value="${maxMb}" style="width:120px;display:inline-block;"></label>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary" onclick="saveAdminHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-floppy-disk"></i> Save Homework</button>
+        ${hw ? `<button class="btn btn-secondary" onclick="deleteAdminHomework('${escapeAttr(moduleId)}')" style="color:#c62828;border-color:#c62828;"><i class="fa-solid fa-trash"></i> Remove Homework</button>` : ''}
+        <span id="hw-editor-status" class="text-muted text-sm"></span>
+      </div>
+    </div></div>`;
+}
+
+async function saveAdminHomework(moduleId) {
+  const status = document.getElementById('hw-editor-status');
+  const payload = {
+    title: document.getElementById('hw-title').value || null,
+    description: document.getElementById('hw-desc').value || '',
+    is_required: document.getElementById('hw-required').checked,
+    max_size_mb: parseInt(document.getElementById('hw-max').value, 10) || 500
+  };
+  if (!payload.description.trim()) { if (status) status.innerHTML = '<span style="color:#c62828;">Description is required.</span>'; return; }
+  if (status) status.textContent = 'Saving…';
+  const r = await apiCall('/api/admin/modules/' + encodeURIComponent(moduleId) + '/homework', {
+    method: 'PUT', body: JSON.stringify(payload)
+  });
+  if (r && !r.error) {
+    if (status) status.innerHTML = '<span style="color:#2e7d32;">Saved.</span>';
+    loadAdminModuleHomework(moduleId);
+  } else {
+    if (status) status.innerHTML = '<span style="color:#c62828;">' + escapeHtml((r && r.error) || 'Save failed') + '</span>';
+  }
+}
+window.saveAdminHomework = saveAdminHomework;
+
+async function deleteAdminHomework(moduleId) {
+  if (!confirm('Remove the homework prompt? Submissions will be kept unless you confirm wiping them.')) return;
+  const wipe = confirm('Also delete all student submissions for this homework? Click OK to delete submissions, Cancel to keep them.');
+  const url = '/api/admin/modules/' + encodeURIComponent(moduleId) + '/homework' + (wipe ? '?wipe_submissions=true' : '');
+  const r = await apiCall(url, { method: 'DELETE' });
+  if (r && !r.error) loadAdminModuleHomework(moduleId);
+  else alert((r && r.error) || 'Delete failed');
+}
+window.deleteAdminHomework = deleteAdminHomework;
+
+function renderAdminHomeworkSubmissionsList(moduleId, subs) {
+  const target = document.getElementById('hw-submissions');
+  if (!target) return;
+  if (!subs.length) {
+    target.innerHTML = `<div class="card"><div class="card-body text-center text-muted"><i class="fa-solid fa-inbox"></i> No submissions yet for this module.</div></div>`;
+    return;
+  }
+  target.innerHTML = `
+    <div class="card"><div class="card-body">
+      <h3 style="margin-top:0;"><i class="fa-solid fa-inbox"></i> Submissions (${subs.length})</h3>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        ${subs.map(s => renderAdminSubmissionRow(s)).join('')}
+      </div>
+    </div></div>`;
+  // Wire up comments threads
+  subs.forEach(s => renderHomeworkCommentsThread(s.id));
+}
+
+function renderAdminSubmissionRow(s) {
+  const locked = _hwIsLocked(s.status);
+  return `
+    <div style="border:1px solid #e6dfd1;border-radius:10px;padding:14px;background:#fafaf7;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:600;">${escapeHtml(s.full_name || s.username)}</div>
+          <div class="text-muted text-sm">${escapeHtml(s.email || '')} &middot; submitted ${new Date(s.submitted_at).toLocaleString()}</div>
+        </div>
+        ${_hwStatusBadge(s.status)}
+      </div>
+      <video controls preload="metadata" style="width:100%;max-height:480px;margin-top:10px;border-radius:8px;background:#000;">
+        <source src="${escapeAttr(s.video_url)}" type="${escapeAttr(s.mime_type || 'video/mp4')}">
+        Cannot play this video. <a href="${escapeAttr(s.video_url)}" target="_blank">Download it.</a>
+      </video>
+      <div class="text-muted text-sm" style="margin-top:6px;">${escapeHtml(s.original_filename || '')} &middot; ${_hwFmtBytes(s.size_bytes)} &middot; <a href="${escapeAttr(s.video_url)}" target="_blank">open in new tab</a></div>
+      ${s.student_notes ? `<div style="margin-top:8px;"><em>Student notes:</em> ${escapeHtml(s.student_notes)}</div>` : ''}
+      <div style="margin-top:12px;border-top:1px dashed #d8cdb8;padding-top:12px;">
+        <h4 style="margin:0 0 6px 0;font-size:14px;"><i class="fa-solid fa-gavel"></i> Grade</h4>
+        <textarea id="hw-feedback-${s.id}" rows="2" placeholder="Grading note (saved with the status)" class="form-control" style="margin-bottom:8px;">${escapeHtml(s.admin_feedback || '')}</textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="gradeHomework(${s.id}, 'approved')" style="background:#2e7d32;border-color:#2e7d32;"><i class="fa-solid fa-circle-check"></i> Approve</button>
+          <button class="btn btn-primary btn-sm" onclick="gradeHomework(${s.id}, 'needs_revision')" style="background:#e65100;border-color:#e65100;"><i class="fa-solid fa-rotate-right"></i> Request Revision</button>
+          ${locked ? `<button class="btn btn-secondary btn-sm" onclick="gradeHomework(${s.id}, 'submitted')" title="Reopen so the student can replace the video"><i class="fa-solid fa-unlock"></i> Reopen</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="deleteAdminSubmission(${s.id})" style="color:#c62828;margin-left:auto;"><i class="fa-solid fa-trash"></i> Delete</button>
+        </div>
+        <span id="hw-grade-status-${s.id}" class="text-muted text-sm" style="margin-top:6px;display:inline-block;"></span>
+      </div>
+      <div id="hw-comments-${s.id}" style="margin-top:12px;"></div>
+    </div>`;
+}
+
+async function gradeHomework(submissionId, status) {
+  const fb = (document.getElementById('hw-feedback-' + submissionId) || {}).value || '';
+  const st = document.getElementById('hw-grade-status-' + submissionId);
+  if (st) st.textContent = 'Saving…';
+  const r = await apiCall('/api/admin/homework-submissions/' + submissionId, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, admin_feedback: fb })
+  });
+  if (r && !r.error) {
+    if (st) st.innerHTML = '<span style="color:#2e7d32;">Saved.</span>';
+    // Refresh row (reload current page data)
+    const p = APP.viewParams || {};
+    if (p.view === 'moduleHomework' && p.moduleId) loadAdminModuleHomework(p.moduleId);
+    else if (p.view === 'homework-inbox') loadAdminHomeworkInbox();
+  } else {
+    if (st) st.innerHTML = '<span style="color:#c62828;">' + escapeHtml((r && r.error) || 'Failed') + '</span>';
+  }
+}
+window.gradeHomework = gradeHomework;
+
+async function deleteAdminSubmission(id) {
+  if (!confirm('Delete this submission and its video file? This cannot be undone.')) return;
+  const r = await apiCall('/api/admin/homework-submissions/' + id, { method: 'DELETE' });
+  if (r && !r.error) {
+    const p = APP.viewParams || {};
+    if (p.view === 'moduleHomework' && p.moduleId) loadAdminModuleHomework(p.moduleId);
+    else if (p.view === 'homework-inbox') loadAdminHomeworkInbox();
+  } else alert((r && r.error) || 'Delete failed');
+}
+window.deleteAdminSubmission = deleteAdminSubmission;
+
+// ----- ADMIN: Homework Inbox (all modules) -----
+
+function renderAdminHomeworkInbox() {
+  setTimeout(loadAdminHomeworkInbox, 0);
+  return `
+    <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Admin</a>
+      <i class="fa-solid fa-chevron-right" style="font-size:10px;"></i><span>Homework Inbox</span></div>
+    <div class="page-header fade-in"><h1><i class="fa-solid fa-inbox"></i> Homework Inbox</h1>
+      <p>All student video homework, newest first. Approve or request revisions, then leave feedback comments.</p></div>
+    <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="filterHomeworkInbox('')">All</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterHomeworkInbox('submitted')">Pending</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterHomeworkInbox('approved')">Approved</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterHomeworkInbox('needs_revision')">Needs Revision</button>
+    </div>
+    <div id="hw-inbox"><div class="card"><div class="card-body text-center text-muted">Loading…</div></div></div>`;
+}
+
+let _hwInboxFilter = '';
+function filterHomeworkInbox(status) {
+  _hwInboxFilter = status || '';
+  loadAdminHomeworkInbox();
+}
+window.filterHomeworkInbox = filterHomeworkInbox;
+
+async function loadAdminHomeworkInbox() {
+  const url = '/api/admin/homework-submissions' + (_hwInboxFilter ? ('?status=' + encodeURIComponent(_hwInboxFilter)) : '');
+  const data = await apiCall(url);
+  const subs = Array.isArray(data) ? data : [];
+  NUMA_HW.inbox = subs;
+  const target = document.getElementById('hw-inbox');
+  if (!target) return;
+  if (!subs.length) {
+    target.innerHTML = `<div class="card"><div class="card-body text-center text-muted"><i class="fa-solid fa-inbox"></i> No submissions ${_hwInboxFilter ? 'in this category.' : 'yet.'}</div></div>`;
+    return;
+  }
+  target.innerHTML = `<div class="card"><div class="card-body">
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      ${subs.map(s => `<div>
+        <div style="margin-bottom:6px;font-size:13px;color:#6b5b48;"><strong>Module ${escapeHtml(String(s.module_id))}</strong>${s.homework_title ? ' · ' + escapeHtml(s.homework_title) : ''}</div>
+        ${renderAdminSubmissionRow(s)}
+      </div>`).join('')}
+    </div>
+  </div></div>`;
+  subs.forEach(s => renderHomeworkCommentsThread(s.id));
+}
+
+// Add a "Homework Inbox" card on the admin overview
+(function addHomeworkInboxAdminCard() {
+  if (typeof renderAdminContent !== 'function') return;
+  const _orig = renderAdminContent;
+  window.renderAdminContent = function() {
+    const html = _orig.apply(this, arguments);
+    setTimeout(() => {
+      const grid = document.querySelector('.admin-overview-grid');
+      if (!grid || grid.dataset.hwInboxCard === '1') return;
+      grid.dataset.hwInboxCard = '1';
+      const card = document.createElement('div');
+      card.className = 'admin-overview-card';
+      card.onclick = () => navigate('admin', { view: 'homework-inbox' });
+      card.innerHTML = '<div class="admin-overview-icon"><i class="fa-solid fa-video"></i></div>'
+        + '<h3>Homework Inbox</h3>'
+        + '<p>Review and grade student video submissions across all modules</p>';
+      grid.appendChild(card);
+    }, 0);
+    return html;
+  };
+  renderAdminContent = window.renderAdminContent;
+})();
