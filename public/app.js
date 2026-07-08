@@ -2843,9 +2843,28 @@ async function handleImageUpload(input) {
     input.value = '';
     return;
   }
-  const placeholder = `<p><em>Uploading ${escapeHtml(file.name)}…</em></p>`;
+  // Insert a placeholder with a unique ID so we can find and swap it reliably
+  const uid = 'upl-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+  const placeholderHTML = `<p id="${uid}" data-numa-upload="1"><em>Uploading ${escapeHtml(file.name)}\u2026</em></p>`;
   editor.focus();
-  document.execCommand('insertHTML', false, placeholder);
+  try { document.execCommand('insertHTML', false, placeholderHTML); }
+  catch (_) { editor.insertAdjacentHTML('beforeend', placeholderHTML); }
+
+  function replaceNode(newHTML) {
+    let node = document.getElementById(uid);
+    if (!node) node = editor.querySelector('[data-numa-upload="1"]');
+    if (node && node.outerHTML) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = newHTML;
+      const replacement = tmp.firstElementChild;
+      if (replacement) node.parentNode.replaceChild(replacement, node);
+      else node.parentNode.removeChild(node);
+    } else {
+      // Fallback: append to the end
+      editor.insertAdjacentHTML('beforeend', newHTML);
+    }
+  }
+
   try {
     const fd = new FormData();
     fd.append('file', file);
@@ -2855,15 +2874,14 @@ async function handleImageUpload(input) {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: fd
     });
-    const data = await res.json();
-    if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
+    let data = {};
+    try { data = await res.json(); } catch(_) { data = {}; }
+    if (!res.ok || !data.url) throw new Error(data.error || ('Upload failed (HTTP ' + res.status + ')'));
     let imgUrl = data.absoluteUrl || (API_BASE + data.url);
-    // Force HTTPS — browsers block mixed content on HTTPS pages.
     if (imgUrl.startsWith('http://')) imgUrl = imgUrl.replace(/^http:\/\//, 'https://');
-    // Replace placeholder with real image
-    editor.innerHTML = editor.innerHTML.replace(placeholder, `<p><img src="${imgUrl}" alt="${escapeAttr(file.name)}" style="max-width:100%;height:auto;border-radius:8px;display:block;margin:16px auto;"></p>`);
+    replaceNode(`<p><img src="${imgUrl}" alt="${escapeAttr(file.name)}" style="max-width:100%;height:auto;border-radius:8px;display:block;margin:16px auto;"></p>`);
   } catch (err) {
-    editor.innerHTML = editor.innerHTML.replace(placeholder, `<p style="color:#c00;"><em>Upload failed: ${escapeHtml(err.message || 'unknown error')}</em></p>`);
+    replaceNode(`<p style="color:#c00;"><em>Upload failed: ${escapeHtml(err.message || 'unknown error')}</em></p>`);
   }
   input.value = '';
 }
