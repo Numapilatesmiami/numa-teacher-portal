@@ -123,7 +123,7 @@ app.post('/api/auth/register', async (req, res) => {
     );
     if (codeRes.rowCount === 0) return res.status(400).json({ error: 'Invalid enrollment code' });
 
-    const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    const existing = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
     if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
 
     const hash = await bcrypt.hash(password, 10);
@@ -146,8 +146,8 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
-    // Hardcoded admin login for first-time access
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    // Hardcoded admin login for first-time access (case-insensitive username)
+    if (String(username).toLowerCase() === String(ADMIN_USERNAME).toLowerCase() && password === ADMIN_PASSWORD) {
       // Ensure admin exists in DB
       let adminRes = await pool.query('SELECT * FROM users WHERE username = $1', [ADMIN_USERNAME]);
       if (adminRes.rowCount === 0) {
@@ -163,7 +163,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.json({ token, user: { id: admin.id, username: admin.username, full_name: admin.full_name, email: admin.email, role: 'admin' } });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
     if (result.rowCount === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = result.rows[0];
@@ -309,7 +309,7 @@ app.post('/api/admin/staff', adminRequired, async (req, res) => {
       return res.status(400).json({ error: 'username, full_name, and email are required' });
     }
     const uname = String(username).trim().toLowerCase();
-    const existing = await pool.query('SELECT id FROM users WHERE username = $1', [uname]);
+    const existing = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [uname]);
     if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
     const tempPassword = (password && String(password).length >= 6) ? String(password) : _generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 10);
