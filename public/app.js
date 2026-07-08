@@ -24,7 +24,9 @@ function setAuthToken(t) { _sSet('numa_token', t); }
 
 // Backend API client — silently no-ops if API_BASE is not configured
 async function apiCall(path, options = {}) {
-  if (!API_BASE) return null;
+  // API_BASE is intentionally an empty string when the frontend and backend
+  // are served from the same origin (Railway). Only bail if it's null/undefined.
+  if (API_BASE === null || API_BASE === undefined) return null;
   try {
     const token = getAuthToken();
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -252,8 +254,8 @@ async function handleLogin() {
     return;
   }
 
-  // Try backend first if configured
-  if (API_BASE) {
+  // Try backend first if configured (empty string means same-origin, which is valid)
+  if (API_BASE !== null && API_BASE !== undefined) {
     const result = await apiCall('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username: user, password: pass })
@@ -347,7 +349,7 @@ async function handleRegister() {
   // localStorage-only registration, because that creates ghost accounts that
   // vanish when the browser cache is cleared or when the user logs in from
   // another device.
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     errEl.textContent = 'Registration is temporarily unavailable (no backend configured). Please contact support.';
     errEl.style.display = 'block';
     return;
@@ -2216,7 +2218,7 @@ let _adminModulesCache = null;
 
 async function loadAdminModules(force = false) {
   if (!force && _adminModulesCache) return _adminModulesCache;
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     // Use the admin endpoint that returns ALL modules including unpublished
     // drafts. Falls back to the public endpoint if the admin one isn't
     // available (e.g. older backend or non-admin user).
@@ -2491,7 +2493,7 @@ function sortableSectionRow(s, idx, total, moduleId) {
 
 // Decorate section rows with a 'Has quiz' / 'No quiz' badge
 async function hydrateSectionQuizBadges() {
-  if (!API_BASE) return;
+  if (API_BASE === null || API_BASE === undefined) return;
   const summary = await apiCall('/api/admin/section-quizzes-summary');
   const map = {};
   if (Array.isArray(summary)) {
@@ -2583,7 +2585,7 @@ function commitSectionOrder(moduleId) {
 async function saveSectionOrder(moduleId, sectionIds) {
   const statusEl = document.getElementById('reorder-status');
   if (statusEl) statusEl.innerHTML = '<span class="text-muted"><i class="fa-solid fa-arrows-rotate fa-spin"></i> Saving new order…</span>';
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--warning);">Reordering needs the backend connected.</span>';
     return;
   }
@@ -2653,7 +2655,7 @@ async function saveModule(moduleId, isNew) {
     return;
   }
 
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     const result = isNew
       ? await apiCall('/api/admin/modules', { method: 'POST', body: JSON.stringify(payload) })
       : await apiCall(`/api/admin/modules/${moduleId}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -2671,7 +2673,7 @@ async function saveModule(moduleId, isNew) {
 
 async function deleteModuleConfirm(moduleId, title) {
   if (!confirm(`Delete module "${title}" and all its sections? This cannot be undone.`)) return;
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     await apiCall(`/api/admin/modules/${moduleId}`, { method: 'DELETE' });
     _adminModulesCache = null;
   }
@@ -2836,7 +2838,7 @@ async function handleImageUpload(input) {
   if (!file) return;
   const editor = document.getElementById('sec-content-rich');
   if (!editor) return;
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     alert('Image upload needs the backend connected. Add window.NUMA_API_BASE to your site.');
     input.value = '';
     return;
@@ -2904,7 +2906,7 @@ async function saveSection(moduleId, sectionId, isNew) {
     return;
   }
 
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     const result = isNew
       ? await apiCall('/api/admin/sections', { method: 'POST', body: JSON.stringify(payload) })
       : await apiCall(`/api/admin/sections/${sectionId}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -2922,7 +2924,7 @@ async function saveSection(moduleId, sectionId, isNew) {
 
 async function deleteSectionConfirm(sectionId, title, moduleId) {
   if (!confirm(`Delete section "${title}"? This cannot be undone.`)) return;
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     await apiCall(`/api/admin/sections/${sectionId}`, { method: 'DELETE' });
     _adminModulesCache = null;
   }
@@ -3016,7 +3018,7 @@ async function saveAccountProfile() {
     return;
   }
   statusEl.innerHTML = '<span class="text-muted">Saving...</span>';
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     const result = await apiCall('/api/auth/me', { method: 'PUT', body: JSON.stringify({ full_name: fullName, email }) });
     if (result) {
       APP.currentUser.fullName = fullName;
@@ -3056,7 +3058,7 @@ async function saveAccountPassword() {
     return;
   }
   statusEl.innerHTML = '<span class="text-muted">Updating...</span>';
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     const result = await apiCall('/api/auth/password', { method: 'PUT', body: JSON.stringify({ current_password: current, new_password: next }) });
     if (result && result.ok) {
       statusEl.innerHTML = '<span style="color:var(--success);"><i class="fa-solid fa-check"></i> Password updated. Use the new password next time you sign in.</span>';
@@ -3076,7 +3078,7 @@ async function adminResetStudentPassword(studentId, studentName) {
   const newPw = prompt(`Enter a new password for ${studentName}.\nThey will use this to log in. (at least 6 characters)`);
   if (!newPw) return;
   if (newPw.length < 6) { alert('Password must be at least 6 characters.'); return; }
-  if (!API_BASE) { alert('This needs the backend connected.'); return; }
+  if (API_BASE === null || API_BASE === undefined) { alert('This needs the backend connected.'); return; }
   const result = await apiCall(`/api/admin/students/${studentId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPw }) });
   if (result && result.ok) {
     alert(`Password reset successfully for ${studentName}.\nNew password: ${newPw}\n\nPlease share this with them securely. They can change it themselves once logged in via Account Settings.`);
@@ -4822,7 +4824,7 @@ async function loadModuleQuizForEdit(moduleId) {
   if (!mod) return;
   let questions = null;
   let isOverride = false;
-  if (API_BASE) {
+  if (API_BASE !== null && API_BASE !== undefined) {
     try {
       const res = await apiCall(`/api/admin/module-quiz/${encodeURIComponent(moduleId)}`);
       if (res && res.override && Array.isArray(res.override.questions)) {
@@ -4973,7 +4975,7 @@ async function saveModuleQuizOverride() {
       return;
     }
   }
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     statusEl.innerHTML = '<span style="color:var(--error);">Backend not connected. Cannot save.</span>';
     return;
   }
@@ -5000,7 +5002,7 @@ async function saveModuleQuizOverride() {
 
 async function resetModuleQuizToDefault(moduleId) {
   if (!confirm('Revert this quiz back to the original hardcoded questions? Any custom edits will be lost.')) return;
-  if (!API_BASE) { alert('Backend not connected.'); return; }
+  if (API_BASE === null || API_BASE === undefined) { alert('Backend not connected.'); return; }
   try {
     await apiCall(`/api/admin/module-quiz/${encodeURIComponent(moduleId)}`, { method: 'DELETE' });
     // Reload the editor with defaults
@@ -5018,7 +5020,7 @@ async function resetModuleQuizToDefault(moduleId) {
 // quiz without needing a code deploy.
 // =============================================================================
 async function applyModuleQuizOverrides() {
-  if (!API_BASE) return;
+  if (API_BASE === null || API_BASE === undefined) return;
   if (typeof COURSE_MODULES === 'undefined') return;
   try {
     const res = await apiCall('/api/module-quiz-overrides');
@@ -5080,7 +5082,7 @@ function getHourReq(type) {
 }
 
 async function loadProgramSettings() {
-  if (!API_BASE) return;
+  if (API_BASE === null || API_BASE === undefined) return;
   try {
     const res = await apiCall('/api/program-settings');
     if (res && res.settings) {
@@ -5188,7 +5190,7 @@ async function saveProgramSettings() {
       return;
     }
   }
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     statusEl.innerHTML = '<span style="color:var(--error);">Backend not connected.</span>';
     return;
   }
@@ -5234,7 +5236,7 @@ function resetHourRequirementsToDefault() {
 let _moduleContentLoaded = false;
 
 async function applyModuleContentOverrides() {
-  if (!API_BASE) return;
+  if (API_BASE === null || API_BASE === undefined) return;
   if (typeof COURSE_MODULES === 'undefined') return;
   try {
     const list = await apiCall('/api/modules');
@@ -5347,7 +5349,7 @@ async function applyModuleContentOverrides() {
 // Fetches the current module, flips is_published, and PUTs the full body
 // back (the backend's PUT requires all the editable fields).
 async function quickTogglePublish(moduleId, makePublished) {
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     alert('Backend not connected — cannot toggle publish state.');
     return;
   }
@@ -5402,7 +5404,7 @@ async function _doTogglePublish(mod, makePublished) {
 // canonical student list from the backend and merges it into numa_users so
 // every existing admin view (Students table, Gradebook, etc.) just works.
 async function syncStudentsFromBackend() {
-  if (!API_BASE) return false;
+  if (API_BASE === null || API_BASE === undefined) return false;
   if (!APP.currentUser || !APP.currentUser.isAdmin) return false;
   const rows = await apiCall('/api/admin/students');
   if (!rows || rows.error || !Array.isArray(rows)) {
@@ -5621,7 +5623,7 @@ async function pushMyLocalProgress() {
     console.warn('Must be logged in as a student');
     return;
   }
-  if (!API_BASE) {
+  if (API_BASE === null || API_BASE === undefined) {
     console.warn('Backend not configured');
     return;
   }
