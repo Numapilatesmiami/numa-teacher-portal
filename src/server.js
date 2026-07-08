@@ -402,7 +402,10 @@ app.post('/api/admin/users/:id/reset-password', adminRequired, async (req, res) 
   }
 });
 
-// Admin enables or disables any account. Disabled accounts cannot log in.
+// Admin enables or disables any account.
+// * Staff (admin/teacher): disable = suspend login (reversible). Enable restores.
+// * Students: disable = PERMANENTLY DELETE the student and all their work.
+//   Enable is a no-op for students (there is nothing left to re-enable).
 // Body: { is_active: true | false }
 app.patch('/api/admin/users/:id/active', adminRequired, async (req, res) => {
   try {
@@ -411,12 +414,41 @@ app.patch('/api/admin/users/:id/active', adminRequired, async (req, res) => {
     if (Number(req.params.id) === Number(req.user.id) && is_active === false) {
       return res.status(400).json({ error: 'You cannot disable your own account.' });
     }
+    // Look up the target's role first so we know whether to delete or suspend.
+    const target = await pool.query(
+      'SELECT id, username, full_name, role FROM users WHERE id = $1',
+      [req.params.id]
+    );
+    if (target.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const targetRole = target.rows[0].role;
+
+    // STUDENT + disable => hard delete. All child rows cascade via FK ON DELETE CASCADE.
+    if (is_active === false && targetRole === 'student') {
+      await pool.query('DELETE FROM users WHERE id = $1 AND role = $2', [req.params.id, 'student']);
+      return res.json({
+        deleted: true,
+        id: Number(req.params.id),
+        username: target.rows[0].username,
+        full_name: target.rows[0].full_name,
+        role: 'student'
+      });
+    }
+
+    // STUDENT + enable => nothing to do (the account either exists already or was deleted).
+    if (is_active === true && targetRole === 'student') {
+      const r2 = await pool.query(
+        'UPDATE users SET is_active = TRUE WHERE id = $1 RETURNING id, username, full_name, role, is_active',
+        [req.params.id]
+      );
+      return res.json(r2.rows[0]);
+    }
+
+    // STAFF => reversible flag flip.
     const r = await pool.query(
       'UPDATE users SET is_active = $1 WHERE id = $2 RETURNING id, username, full_name, role, is_active',
       [is_active, req.params.id]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'User not found' });
-    // Ping the user if they were disabled.
     if (is_active === false) {
       notify(Number(req.params.id), {
         type: 'account',

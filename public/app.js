@@ -7609,11 +7609,12 @@ async function loadAdminHomeworkInbox() {
       return;
     }
     tb.innerHTML = rows.map((u) => {
+      // For students, "Disable" means "delete the account entirely".
       const actions =
         '<button class="btn btn-ghost btn-sm" onclick="numaResetPassword(' + u.id + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
           '<i class="fa-solid fa-key"></i> Reset password</button> ' +
-        '<button class="btn btn-ghost btn-sm" onclick="numaToggleActive(' + u.id + ',' + (u.is_active === false) + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
-          (u.is_active === false ? '<i class="fa-solid fa-circle-check"></i> Enable' : '<i class="fa-solid fa-ban"></i> Disable') +
+        '<button class="btn btn-ghost btn-sm" style="color:#c00" onclick="numaToggleActive(' + u.id + ',' + (u.is_active === false) + ',\'' + _escapeHtml(u.full_name || u.username) + '\',\'student\')">' +
+          '<i class="fa-solid fa-trash"></i> Disable &amp; delete' +
           '</button>';
       return '<tr>' +
         '<td><strong>' + _escapeHtml(u.full_name || u.username) + '</strong></td>' +
@@ -7671,10 +7672,22 @@ async function loadAdminHomeworkInbox() {
     }
   };
 
-  window.numaToggleActive = async function(userId, currentlyDisabled, name) {
+  window.numaToggleActive = async function(userId, currentlyDisabled, name, roleHint) {
     const willEnable = !!currentlyDisabled;
-    const verb = willEnable ? 'Enable' : 'Disable';
-    if (!confirm(verb + ' account for ' + name + '?' + (willEnable ? '' : ' They will no longer be able to log in until re-enabled.'))) return;
+    // Students: "Disable" permanently deletes the account (per admin request).
+    // Staff: reversible suspend/restore.
+    const isStudent = roleHint === 'student';
+    let ok;
+    if (isStudent) {
+      ok = confirm('PERMANENTLY DELETE student "' + name + '"?\n\n' +
+        'This removes their account, all quiz scores, homework submissions, ' +
+        'hour logs, and every other record they have created. This cannot be undone.');
+    } else {
+      const verb = willEnable ? 'Enable' : 'Disable';
+      ok = confirm(verb + ' account for ' + name + '?' +
+        (willEnable ? '' : ' They will no longer be able to log in until re-enabled.'));
+    }
+    if (!ok) return;
     try {
       await apiCall('/api/admin/users/' + userId + '/active', {
         method: 'PATCH', body: JSON.stringify({ is_active: willEnable })
@@ -7684,7 +7697,7 @@ async function loadAdminHomeworkInbox() {
       _renderStaffTable(staff);
       _renderStudentAccountsTable(students);
     } catch (err) {
-      alert(verb + ' failed: ' + (err?.message || 'unknown error'));
+      alert('Action failed: ' + (err?.message || 'unknown error'));
     }
   };
 
