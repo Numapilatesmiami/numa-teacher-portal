@@ -92,6 +92,19 @@ function adminRequired(req, res, next) {
   });
 }
 
+// Staff = admin OR teacher. Teachers get read-only visibility into student
+// work + grading, but cannot edit curriculum, quizzes, financials, or
+// manage other staff accounts.
+function staffRequired(req, res, next) {
+  authRequired(req, res, () => {
+    const role = req.user?.role;
+    if (role !== 'admin' && role !== 'teacher') {
+      return res.status(403).json({ error: 'Staff only' });
+    }
+    next();
+  });
+}
+
 // ===== HEALTH =====
 app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
@@ -154,6 +167,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (result.rowCount === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
     const user = result.rows[0];
+    if (user.is_active === false) {
+      return res.status(403).json({ error: 'Account disabled. Please contact NUMA Pilates.' });
+    }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -161,7 +177,8 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       token,
       user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email, role: user.role,
-              program_track: user.program_track, tuition_status: user.tuition_status }
+              program_track: user.program_track, tuition_status: user.tuition_status,
+              must_reset_password: user.must_reset_password === true }
     });
   } catch (err) {
     console.error(err);
@@ -171,10 +188,43 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const result = await pool.query(
-    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tos_accepted_at FROM users WHERE id = $1',
+    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tos_accepted_at, is_active, must_reset_password FROM users WHERE id = $1',
     [req.user.id]
   );
-  res.json(result.rows[0] || null);
+  const u = result.rows[0];
+  if (u && u.is_active === false) {
+    return res.status(403).json({ error: 'Account disabled.' });
+  }
+  res.json(u || null);
+});
+
+// User-facing: change my own password. Also used to satisfy must_reset_password.
+app.post('/api/auth/change-password', authRequired, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body || {};
+    if (!new_password || String(new_password).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    const r = await pool.query('SELECT password_hash, must_reset_password FROM users WHERE id = $1', [req.user.id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    // If NOT a forced reset, require the current password. Forced resets
+    // (must_reset_password = true) let the user set a new one without knowing
+    // the temp password (they just used it to log in).
+    if (r.rows[0].must_reset_password !== true) {
+      if (!current_password) return res.status(400).json({ error: 'Current password required' });
+      const ok = await bcrypt.compare(current_password, r.rows[0].password_hash);
+      if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    const hash = await bcrypt.hash(new_password, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, must_reset_password = FALSE WHERE id = $2',
+      [hash, req.user.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[change-password]', err);
+    res.status(500).json({ error: 'Password change failed' });
+  }
 });
 
 // ===== CONTENT PROTECTION =====
@@ -219,6 +269,165 @@ app.post('/api/security/screenshot-attempt', authRequired, async (req, res) => {
     console.warn('[screenshot-attempt]', err?.message);
     // Best-effort: never break the client over a missed log row.
     res.json({ ok: false });
+  }
+});
+
+// =========================================================================
+// ===== ADMIN: STAFF ACCOUNT MANAGEMENT (teachers + admins) ==============
+// =========================================================================
+
+// Simple, human-friendly temp password generator.
+function _generateTempPassword() {
+  const words = ['Reformer','Cadillac','Wunda','Barrel','Studio','Balance','Center','Flow','Breath','Pilates'];
+  const w = words[Math.floor(Math.random() * words.length)];
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return w + n + '!';
+}
+
+// List all staff accounts (admins + teachers).
+app.get('/api/admin/staff', adminRequired, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, username, full_name, email, role, is_active, created_at,
+              must_reset_password
+         FROM users
+        WHERE role IN ('admin', 'teacher')
+        ORDER BY role ASC, created_at DESC`
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('[list staff]', err);
+    res.status(500).json({ error: 'Failed to load staff' });
+  }
+});
+
+// Create a new teacher account. Returns the temp password once (admin must share it).
+app.post('/api/admin/staff', adminRequired, async (req, res) => {
+  try {
+    const { username, full_name, email, password } = req.body || {};
+    if (!username || !full_name || !email) {
+      return res.status(400).json({ error: 'username, full_name, and email are required' });
+    }
+    const uname = String(username).trim().toLowerCase();
+    const existing = await pool.query('SELECT id FROM users WHERE username = $1', [uname]);
+    if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
+    const tempPassword = (password && String(password).length >= 6) ? String(password) : _generateTempPassword();
+    const hash = await bcrypt.hash(tempPassword, 10);
+    const result = await pool.query(
+      `INSERT INTO users (username, password_hash, full_name, email, role, is_active, must_reset_password)
+       VALUES ($1, $2, $3, $4, 'teacher', TRUE, TRUE)
+       RETURNING id, username, full_name, email, role, is_active, must_reset_password, created_at`,
+      [uname, hash, String(full_name).trim(), String(email).trim()]
+    );
+    res.json({ ...result.rows[0], temp_password: tempPassword });
+  } catch (err) {
+    console.error('[create staff]', err);
+    res.status(500).json({ error: 'Failed to create staff account' });
+  }
+});
+
+// Update a staff member's basic info (name/email). Does NOT change role or password.
+app.patch('/api/admin/staff/:id', adminRequired, async (req, res) => {
+  try {
+    const { full_name, email } = req.body || {};
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (full_name !== undefined) { sets.push(`full_name = $${i++}`); vals.push(full_name); }
+    if (email !== undefined) { sets.push(`email = $${i++}`); vals.push(email); }
+    if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
+    vals.push(req.params.id);
+    const sql = `UPDATE users SET ${sets.join(', ')} WHERE id = $${i} AND role IN ('admin','teacher') RETURNING id, username, full_name, email, role, is_active`;
+    const r = await pool.query(sql, vals);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Staff not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('[update staff]', err);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+// Delete a teacher (admins protected from deletion).
+app.delete('/api/admin/staff/:id', adminRequired, async (req, res) => {
+  try {
+    // Never allow the acting admin to delete themselves.
+    if (Number(req.params.id) === Number(req.user.id)) {
+      return res.status(400).json({ error: 'You cannot delete your own account.' });
+    }
+    const r = await pool.query(
+      `DELETE FROM users WHERE id = $1 AND role = 'teacher' RETURNING id`,
+      [req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Teacher not found (only teacher accounts can be deleted here).' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[delete staff]', err);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+// =========================================================================
+// ===== ADMIN: PASSWORD RESET + ENABLE/DISABLE for ANY account ==========
+// =========================================================================
+
+// Admin resets any user's password. Returns the temp password once.
+// If body.password is provided (>=6 chars), it is used verbatim.
+// Otherwise a friendly temp password is generated.
+// Sets must_reset_password = TRUE so the user is forced to choose a new one on next login.
+app.post('/api/admin/users/:id/reset-password', adminRequired, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    const target = await pool.query('SELECT id, username, full_name, role FROM users WHERE id = $1', [req.params.id]);
+    if (target.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const tempPassword = (password && String(password).length >= 6) ? String(password) : _generateTempPassword();
+    const hash = await bcrypt.hash(tempPassword, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, must_reset_password = TRUE WHERE id = $2',
+      [hash, req.params.id]
+    );
+    // Notify the user so they know a reset happened.
+    notify(Number(req.params.id), {
+      type: 'account',
+      title: 'Your NUMA Pilates password was reset',
+      body: 'An administrator reset your password. Log in with the temporary password provided, then choose a new one.'
+    }).catch(() => {});
+    res.json({
+      ok: true,
+      user: target.rows[0],
+      temp_password: tempPassword
+    });
+  } catch (err) {
+    console.error('[admin reset password]', err);
+    res.status(500).json({ error: 'Reset failed' });
+  }
+});
+
+// Admin enables or disables any account. Disabled accounts cannot log in.
+// Body: { is_active: true | false }
+app.patch('/api/admin/users/:id/active', adminRequired, async (req, res) => {
+  try {
+    const { is_active } = req.body || {};
+    if (typeof is_active !== 'boolean') return res.status(400).json({ error: 'is_active (boolean) required' });
+    if (Number(req.params.id) === Number(req.user.id) && is_active === false) {
+      return res.status(400).json({ error: 'You cannot disable your own account.' });
+    }
+    const r = await pool.query(
+      'UPDATE users SET is_active = $1 WHERE id = $2 RETURNING id, username, full_name, role, is_active',
+      [is_active, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    // Ping the user if they were disabled.
+    if (is_active === false) {
+      notify(Number(req.params.id), {
+        type: 'account',
+        title: 'Your NUMA Pilates account is disabled',
+        body: 'Your account has been temporarily disabled. Contact NUMA Pilates for details.'
+      }).catch(() => {});
+    }
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('[admin toggle active]', err);
+    res.status(500).json({ error: 'Update failed' });
   }
 });
 
@@ -366,7 +575,7 @@ app.get('/api/scenarios', authRequired, async (req, res) => {
   res.json(result.rows);
 });
 
-app.put('/api/admin/scenarios/:id/grade', adminRequired, async (req, res) => {
+app.put('/api/admin/scenarios/:id/grade', staffRequired, async (req, res) => {
   const { score, feedback } = req.body;
   const result = await pool.query(
     `UPDATE scenarios SET score=$1, feedback=$2, graded_at=NOW() WHERE id=$3 RETURNING *`,
@@ -388,7 +597,7 @@ app.put('/api/admin/scenarios/:id/grade', adminRequired, async (req, res) => {
 // Admin can manually assign one or more scenario IDs to a student.
 // This writes a record into `scenarios` with status placeholder and
 // (more importantly) fires a notification so the student sees "Scenario assigned".
-app.post('/api/admin/scenarios/assign', adminRequired, async (req, res) => {
+app.post('/api/admin/scenarios/assign', staffRequired, async (req, res) => {
   try {
     const { user_id, scenario_ids, note } = req.body || {};
     if (!user_id || !Array.isArray(scenario_ids) || scenario_ids.length === 0) {
@@ -453,7 +662,7 @@ app.get('/api/final-exam', authRequired, async (req, res) => {
 });
 
 // ===== ADMIN: STUDENTS =====
-app.get('/api/admin/students', adminRequired, async (_req, res) => {
+app.get('/api/admin/students', staffRequired, async (_req, res) => {
   const result = await pool.query(`
     SELECT u.id, u.username, u.full_name, u.email, u.enrollment_code, u.created_at,
       u.program_track, u.tuition_status, u.tuition_total, u.tuition_amount_paid, u.tuition_notes,
@@ -508,7 +717,7 @@ app.patch('/api/admin/students/:id', adminRequired, async (req, res) => {
   res.json(result.rows[0]);
 });
 
-app.get('/api/admin/students/:id', adminRequired, async (req, res) => {
+app.get('/api/admin/students/:id', staffRequired, async (req, res) => {
   const userRes = await pool.query('SELECT id, username, full_name, email, enrollment_code, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes FROM users WHERE id = $1', [req.params.id]);
   if (userRes.rowCount === 0) return res.status(404).json({ error: 'Not found' });
   const quizRes = await pool.query('SELECT * FROM quiz_scores WHERE user_id = $1 ORDER BY completed_at DESC', [req.params.id]);
@@ -711,7 +920,7 @@ app.get('/api/progress/me', authRequired, async (req, res) => {
 });
 
 // Admin: view any student's progress + quiz attempts
-app.get('/api/admin/students/:id/progress', adminRequired, async (req, res) => {
+app.get('/api/admin/students/:id/progress', staffRequired, async (req, res) => {
   try {
     const progress = await pool.query(
       `SELECT sp.section_id, sp.completed, sp.completed_at, s.title, s.module_id, m.title AS module_title
@@ -861,12 +1070,22 @@ async function notify(userId, payload) {
 async function notifyAllStudentsExcept(excludeUserId, payload) {
   try {
     const ids = await pool.query(
-      "SELECT id FROM users WHERE role != 'admin' AND id != $1",
+      "SELECT id FROM users WHERE role NOT IN ('admin', 'teacher') AND id != $1",
       [excludeUserId || 0]
     );
     for (const row of ids.rows) await notify(row.id, payload);
   } catch (e) { console.warn('[notify-all] failed:', e.message); }
 }
+// Send a notification to every admin AND teacher (staff).
+async function notifyStaff(payload) {
+  try {
+    const ids = await pool.query("SELECT id FROM users WHERE role IN ('admin', 'teacher')");
+    for (const r of ids.rows) {
+      await notify(r.id, payload);
+    }
+  } catch (e) { console.warn('[notifyStaff]', e?.message); }
+}
+
 async function notifyAdmins(payload) {
   try {
     const ids = await pool.query("SELECT id FROM users WHERE role = 'admin'");
@@ -1133,7 +1352,7 @@ app.delete('/api/admin/modules/:moduleId/homework', adminRequired, async (req, r
 });
 
 // Admin: list ALL homework submissions across modules (with student + module info)
-app.get('/api/admin/homework-submissions', adminRequired, async (req, res) => {
+app.get('/api/admin/homework-submissions', staffRequired, async (req, res) => {
   try {
     const status = req.query.status; // optional filter
     const params = [];
@@ -1161,7 +1380,7 @@ app.get('/api/admin/homework-submissions', adminRequired, async (req, res) => {
 });
 
 // Admin: list submissions for a single module
-app.get('/api/admin/modules/:moduleId/homework-submissions', adminRequired, async (req, res) => {
+app.get('/api/admin/modules/:moduleId/homework-submissions', staffRequired, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT hs.id, hs.user_id, hs.video_url, hs.original_filename, hs.mime_type,
@@ -1181,8 +1400,8 @@ app.get('/api/admin/modules/:moduleId/homework-submissions', adminRequired, asyn
   }
 });
 
-// Admin: update review status / feedback for one submission
-app.patch('/api/admin/homework-submissions/:id', adminRequired, async (req, res) => {
+// Staff: update review status / feedback for one submission (teachers can grade)
+app.patch('/api/admin/homework-submissions/:id', staffRequired, async (req, res) => {
   try {
     const { status, admin_feedback } = req.body || {};
     const validStatus = ['submitted', 'approved', 'needs_revision'];
@@ -1577,16 +1796,21 @@ app.post('/api/questions/:id/replies', authRequired, async (req, res) => {
     if (!body || !body.trim()) return res.status(400).json({ error: 'Reply body required' });
     const qRes = await pool.query('SELECT user_id FROM student_questions WHERE id = $1', [req.params.id]);
     if (qRes.rowCount === 0) return res.status(404).json({ error: 'Question not found' });
-    if (req.user.role !== 'admin' && qRes.rows[0].user_id !== req.user.id) {
+    const isStaff = req.user.role === 'admin' || req.user.role === 'teacher';
+    if (!isStaff && qRes.rows[0].user_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    // Store teacher replies under 'admin' role so existing UI (which styles
+    // admin messages as “staff”) treats them the same. Actual author_id is
+    // preserved for auditability.
+    const authorRole = isStaff ? 'admin' : req.user.role;
     const result = await pool.query(
       `INSERT INTO question_replies (question_id, author_id, author_role, body)
        VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.params.id, req.user.id, req.user.role, body.trim()]
+      [req.params.id, req.user.id, authorRole, body.trim()]
     );
     // Update parent question status + timestamp
-    const newStatus = req.user.role === 'admin' ? 'answered' : 'open';
+    const newStatus = isStaff ? 'answered' : 'open';
     await pool.query(
       `UPDATE student_questions SET status = $1, updated_at = NOW() WHERE id = $2`,
       [newStatus, req.params.id]
@@ -1599,7 +1823,7 @@ app.post('/api/questions/:id/replies', authRequired, async (req, res) => {
 });
 
 // Admin: list ALL student questions
-app.get('/api/admin/questions', adminRequired, async (req, res) => {
+app.get('/api/admin/questions', staffRequired, async (req, res) => {
   try {
     const status = req.query.status; // optional filter
     const params = [];
@@ -1623,7 +1847,7 @@ app.get('/api/admin/questions', adminRequired, async (req, res) => {
 });
 
 // Admin: mark question status (open / answered / closed)
-app.put('/api/admin/questions/:id/status', adminRequired, async (req, res) => {
+app.put('/api/admin/questions/:id/status', staffRequired, async (req, res) => {
   const { status } = req.body || {};
   if (!['open', 'answered', 'closed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
   const result = await pool.query(
@@ -1794,7 +2018,8 @@ app.delete('/api/forum/posts/:id', authRequired, async (req, res) => {
   try {
     const r = await pool.query('SELECT user_id FROM forum_posts WHERE id = $1', [req.params.id]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
-    if (req.user.role !== 'admin' && r.rows[0].user_id !== req.user.id) {
+    const isStaff = req.user.role === 'admin' || req.user.role === 'teacher';
+    if (!isStaff && r.rows[0].user_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     await pool.query('DELETE FROM forum_posts WHERE id = $1', [req.params.id]);
@@ -1805,8 +2030,8 @@ app.delete('/api/forum/posts/:id', authRequired, async (req, res) => {
   }
 });
 
-// Admin: pin / hide moderation
-app.put('/api/admin/forum/posts/:id', adminRequired, async (req, res) => {
+// Staff: pin / hide moderation (admin + teacher)
+app.put('/api/admin/forum/posts/:id', staffRequired, async (req, res) => {
   const { is_pinned, is_hidden } = req.body || {};
   const result = await pool.query(
     `UPDATE forum_posts SET

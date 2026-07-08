@@ -369,6 +369,13 @@ export async function initDatabase() {
       -- Content protection: Terms of Service acceptance timestamp.
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tos_accepted_at TIMESTAMPTZ;
 
+      -- Account enable/disable flag. Disabled accounts cannot log in.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+      -- Force-reset flag: when true, the user must set a new password on
+      -- next login. Cleared automatically after they choose one.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS must_reset_password BOOLEAN NOT NULL DEFAULT FALSE;
+
       -- Content protection: log of possible screenshot/visibility-blur events.
       CREATE TABLE IF NOT EXISTS screenshot_alerts (
         id SERIAL PRIMARY KEY,

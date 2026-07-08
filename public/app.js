@@ -143,7 +143,12 @@ function init() {
         navigate('login');
         return;
       }
-      APP.currentUser = { username: 'admin', isAdmin: true };
+      // Distinguish teacher vs admin restored sessions.
+      if (session.isTeacher) {
+        APP.currentUser = { username: session.username, isAdmin: true, isTeacher: true, role: 'teacher' };
+      } else {
+        APP.currentUser = { username: 'admin', isAdmin: true, role: 'admin' };
+      }
       navigate('admin');
     } else {
       APP.currentUser = getUserData(session.username);
@@ -258,6 +263,11 @@ async function handleLogin() {
       if (result.user.role === 'admin') {
         APP.currentUser = { username: 'admin', isAdmin: true, ...result.user };
         saveSession({ username: 'admin', isAdmin: true });
+        navigate('admin');
+      } else if (result.user.role === 'teacher') {
+        // Teachers use the same admin shell but with content-editing hidden.
+        APP.currentUser = { username: result.user.username, isAdmin: true, isTeacher: true, ...result.user };
+        saveSession({ username: result.user.username, isAdmin: true, isTeacher: true });
         navigate('admin');
       } else {
         // Merge with local data for offline-style usage
@@ -7326,4 +7336,428 @@ async function loadAdminHomeworkInbox() {
     refresh: _mountAll,
     reportScreenshot: _reportScreenshot
   };
+})();
+
+// ==========================================================================
+// SECTION EDITOR: drag-to-reorder any block (image, paragraph, heading, etc.)
+// ==========================================================================
+(function NUMA_SECTION_DRAG(){
+  'use strict';
+
+  // Every top-level child of #sec-content-rich becomes draggable, so admins
+  // can grab a photo, heading, or paragraph and drop it above/below another.
+  // Uses native HTML5 DnD so it works on desktop out of the box.
+
+  let dragEl = null;
+
+  function _wireBlocks(editor) {
+    if (!editor) return;
+    const blocks = editor.children;
+    for (let i = 0; i < blocks.length; i++) {
+      const el = blocks[i];
+      if (el.dataset.numaDrag === '1') continue;
+      el.dataset.numaDrag = '1';
+      el.setAttribute('draggable', 'true');
+      // Subtle visual affordance.
+      el.style.cursor = 'grab';
+      el.style.position = 'relative';
+      el.style.transition = 'outline 120ms ease';
+
+      el.addEventListener('dragstart', (e) => {
+        dragEl = el;
+        el.style.opacity = '0.4';
+        try { e.dataTransfer.effectAllowed = 'move'; } catch (_) {}
+        try { e.dataTransfer.setData('text/plain', 'numa-block'); } catch (_) {}
+      });
+      el.addEventListener('dragend', () => {
+        el.style.opacity = '';
+        dragEl = null;
+        // Clear all drop hints
+        for (const c of editor.children) {
+          c.style.outline = '';
+          c.style.outlineOffset = '';
+        }
+      });
+      el.addEventListener('dragover', (e) => {
+        if (!dragEl || dragEl === el) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+        // Insert-above vs insert-below hint based on cursor Y.
+        const rect = el.getBoundingClientRect();
+        const above = (e.clientY - rect.top) < (rect.height / 2);
+        el.style.outline = above ? '2px solid #A38D78' : '';
+        el.style.borderBottom = above ? '' : '';
+        el.style.boxShadow = above ? '' : '0 2px 0 0 #A38D78';
+      });
+      el.addEventListener('dragleave', () => {
+        el.style.outline = '';
+        el.style.boxShadow = '';
+      });
+      el.addEventListener('drop', (e) => {
+        if (!dragEl || dragEl === el) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = el.getBoundingClientRect();
+        const above = (e.clientY - rect.top) < (rect.height / 2);
+        el.style.outline = '';
+        el.style.boxShadow = '';
+        if (above) editor.insertBefore(dragEl, el);
+        else editor.insertBefore(dragEl, el.nextSibling);
+      });
+    }
+  }
+
+  function _mountForEditor() {
+    const editor = document.getElementById('sec-content-rich');
+    if (!editor) return;
+    _wireBlocks(editor);
+    // Whenever the admin types (which can add new <p> blocks), re-wire.
+    if (!editor.dataset.numaDragObserved) {
+      editor.dataset.numaDragObserved = '1';
+      const obs = new MutationObserver(() => _wireBlocks(editor));
+      obs.observe(editor, { childList: true });
+      // Also show a small hint the first time.
+      if (!document.getElementById('numa-drag-hint')) {
+        const hint = document.createElement('div');
+        hint.id = 'numa-drag-hint';
+        hint.style.cssText = 'margin-top:8px;padding:8px 12px;background:#fafaf7;border:1px dashed #A38D78;' +
+          'border-radius:8px;font-size:12px;color:#6a5d4d;';
+        hint.innerHTML = '<i class="fa-solid fa-arrows-up-down-left-right" style="margin-right:6px;color:#A38D78"></i>' +
+          'Tip: grab any image, heading, or paragraph and drag it to reorder within the section.';
+        editor.parentNode.insertBefore(hint, editor.nextSibling);
+      }
+    }
+  }
+
+  // Poll for the editor showing up (it appears only inside the admin section editor page).
+  setInterval(_mountForEditor, 1000);
+})();
+
+// ==========================================================================
+// STAFF ACCOUNTS + TEACHER ROLE SCOPING + FORCED PASSWORD RESET
+// ==========================================================================
+(function NUMA_STAFF(){
+  'use strict';
+
+  function _isTeacher() {
+    const u = window.APP && APP.currentUser;
+    return !!(u && u.isTeacher);
+  }
+  function _isAdminOnly() {
+    const u = window.APP && APP.currentUser;
+    return !!(u && u.isAdmin && !u.isTeacher);
+  }
+
+  // ---------- Hide admin-only overview cards for teachers ----------
+  function _scopeOverviewGrid() {
+    if (!_isTeacher()) return;
+    // Cards teachers should NOT see (curriculum, enrollment, financial settings).
+    const forbiddenHrefs = [
+      "view:'modules'",           // Course Content editor
+      "view:'codes'",             // Enrollment Codes
+      "view:'program-settings'",  // Hour requirements / program settings
+    ];
+    document.querySelectorAll('.admin-overview-card').forEach((card) => {
+      const oc = card.getAttribute('onclick') || '';
+      if (forbiddenHrefs.some((f) => oc.includes(f))) card.style.display = 'none';
+    });
+    // Rename top-nav sub label + user label.
+    const sub = document.querySelector('.nav-logo-sub');
+    if (sub && sub.textContent === 'Admin Dashboard') sub.textContent = 'Teacher Dashboard';
+    const nu = document.querySelector('.nav-user strong');
+    if (nu && nu.textContent === 'Administrator') nu.textContent = 'Teacher';
+    // Hide Manage Admins card if it exists.
+    document.querySelectorAll('.admin-overview-card').forEach((card) => {
+      const oc = card.getAttribute('onclick') || '';
+      if (oc.includes("view:'staff'")) card.style.display = 'none';
+    });
+    // Hide any "Edit" / "New" buttons on module lists (teachers only view).
+    document.querySelectorAll('button, a').forEach((b) => {
+      const t = (b.textContent || '').trim().toLowerCase();
+      if (t === 'new module' || t === 'edit module' || t === 'new section' || t === 'edit section' ||
+          t === 'add section' || t === 'edit final exam' || t === 'delete') {
+        // Only hide inside admin content area, and never on grading pages.
+        const inGrading = b.closest('[data-view="grading"]') || b.closest('#homework-grading-page');
+        if (!inGrading) b.style.display = 'none';
+      }
+    });
+    // Hide financial/tuition fields wherever they appear in student detail.
+    document.querySelectorAll('[data-financial], .tuition-field, #tuition-block, [id^="tuition-"]').forEach((el) => {
+      el.style.display = 'none';
+    });
+    // Best-effort text-based hide for "Tuition" labels.
+    document.querySelectorAll('label, h2, h3, h4').forEach((el) => {
+      const t = (el.textContent || '').trim().toLowerCase();
+      if (t.startsWith('tuition') || t === 'financial' || t === 'billing') {
+        const wrap = el.closest('.form-group, .card, .card-body, .admin-financial') || el;
+        wrap.style.display = 'none';
+      }
+    });
+  }
+
+  // ---------- Add "Staff & Accounts" card for admins ----------
+  function _addStaffCard() {
+    if (!_isAdminOnly()) return;
+    const grid = document.querySelector('.admin-overview-grid');
+    if (!grid) return;
+    if (grid.querySelector('[data-numa-staff-card]')) return;
+    const card = document.createElement('div');
+    card.className = 'admin-overview-card';
+    card.setAttribute('data-numa-staff-card', '1');
+    card.setAttribute('onclick', "navigate('admin',{view:'staff'})");
+    card.innerHTML =
+      '<div class="admin-overview-icon"><i class="fa-solid fa-user-shield"></i></div>' +
+      '<h3>Staff &amp; Accounts</h3>' +
+      '<p>Add teacher logins &middot; reset passwords &middot; enable or disable accounts</p>';
+    grid.appendChild(card);
+  }
+
+  // ---------- Staff & Accounts page ----------
+  async function _fetchStaff() {
+    try { return await apiCall('/api/admin/staff'); }
+    catch (e) { return []; }
+  }
+  async function _fetchStudents() {
+    try { return await apiCall('/api/admin/students'); }
+    catch (e) { return []; }
+  }
+
+  async function _renderStaffPage() {
+    const wrap = document.querySelector('.admin-content-wrap');
+    if (!wrap) return;
+    wrap.innerHTML =
+      '<div class="page-header fade-in">' +
+        '<h1><i class="fa-solid fa-user-shield"></i> Staff &amp; Accounts</h1>' +
+        '<p>Create teacher logins, reset passwords, and enable or disable any account.</p>' +
+      '</div>' +
+      '<div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="navigate(\'admin\')">' +
+        '<i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button></div>' +
+      '<div class="card slide-up"><div class="card-body">' +
+        '<h3 style="margin:0 0 12px">Add a teacher</h3>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end">' +
+          '<div class="form-group" style="margin:0"><label>Username</label>' +
+            '<input id="staff-new-username" class="form-control" placeholder="e.g. jane.doe" autocomplete="off"></div>' +
+          '<div class="form-group" style="margin:0"><label>Full name</label>' +
+            '<input id="staff-new-name" class="form-control" placeholder="Jane Doe"></div>' +
+          '<div class="form-group" style="margin:0"><label>Email</label>' +
+            '<input id="staff-new-email" class="form-control" placeholder="jane@example.com" type="email"></div>' +
+          '<button class="btn btn-primary" onclick="numaCreateTeacher()">' +
+            '<i class="fa-solid fa-plus"></i> Create</button>' +
+        '</div>' +
+        '<div id="staff-new-result" style="margin-top:12px"></div>' +
+      '</div></div>' +
+      '<h2 class="admin-section-heading" style="margin-top:24px">Staff (admins &amp; teachers)</h2>' +
+      '<div class="card slide-up"><div class="card-body" style="padding:0;overflow-x:auto">' +
+        '<table class="admin-table"><thead><tr>' +
+          '<th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th></th>' +
+        '</tr></thead><tbody id="staff-tbody"><tr><td colspan="6" class="text-muted text-center" style="padding:16px">Loading…</td></tr></tbody></table>' +
+      '</div></div>' +
+      '<h2 class="admin-section-heading" style="margin-top:24px">Students</h2>' +
+      '<div class="card slide-up"><div class="card-body" style="padding:0;overflow-x:auto">' +
+        '<table class="admin-table"><thead><tr>' +
+          '<th>Name</th><th>Username</th><th>Email</th><th>Status</th><th></th>' +
+        '</tr></thead><tbody id="students-accounts-tbody"><tr><td colspan="5" class="text-muted text-center" style="padding:16px">Loading…</td></tr></tbody></table>' +
+      '</div></div>';
+
+    const [staff, students] = await Promise.all([_fetchStaff(), _fetchStudents()]);
+    _renderStaffTable(staff);
+    _renderStudentAccountsTable(students);
+  }
+
+  function _statusPill(isActive) {
+    return isActive === false
+      ? '<span class="badge" style="background:#fff3e0;color:#e65100;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">Disabled</span>'
+      : '<span class="badge" style="background:#e8f5e9;color:#2e7d32;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">Active</span>';
+  }
+  function _escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function _renderStaffTable(rows) {
+    const tb = document.getElementById('staff-tbody');
+    if (!tb) return;
+    if (!rows || !rows.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="text-muted text-center" style="padding:16px">No staff yet.</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map((u) => {
+      const isTeacher = u.role === 'teacher';
+      const actions =
+        '<button class="btn btn-ghost btn-sm" onclick="numaResetPassword(' + u.id + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
+          '<i class="fa-solid fa-key"></i> Reset password</button> ' +
+        '<button class="btn btn-ghost btn-sm" onclick="numaToggleActive(' + u.id + ',' + (u.is_active === false) + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
+          (u.is_active === false ? '<i class="fa-solid fa-circle-check"></i> Enable' : '<i class="fa-solid fa-ban"></i> Disable') +
+          '</button>' +
+        (isTeacher
+          ? ' <button class="btn btn-ghost btn-sm" style="color:#c00" onclick="numaDeleteTeacher(' + u.id + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
+              '<i class="fa-solid fa-trash"></i> Delete</button>'
+          : '');
+      return '<tr>' +
+        '<td><strong>' + _escapeHtml(u.full_name || u.username) + '</strong></td>' +
+        '<td>' + _escapeHtml(u.username) + '</td>' +
+        '<td class="text-muted" style="font-size:12px">' + _escapeHtml(u.email || '—') + '</td>' +
+        '<td>' + (u.role === 'admin' ? '<span style="color:#A38D78;font-weight:700">Admin</span>' : 'Teacher') + '</td>' +
+        '<td>' + _statusPill(u.is_active) + '</td>' +
+        '<td>' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function _renderStudentAccountsTable(rows) {
+    const tb = document.getElementById('students-accounts-tbody');
+    if (!tb) return;
+    if (!rows || !rows.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="text-muted text-center" style="padding:16px">No students yet.</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map((u) => {
+      const actions =
+        '<button class="btn btn-ghost btn-sm" onclick="numaResetPassword(' + u.id + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
+          '<i class="fa-solid fa-key"></i> Reset password</button> ' +
+        '<button class="btn btn-ghost btn-sm" onclick="numaToggleActive(' + u.id + ',' + (u.is_active === false) + ',\'' + _escapeHtml(u.full_name || u.username) + '\')">' +
+          (u.is_active === false ? '<i class="fa-solid fa-circle-check"></i> Enable' : '<i class="fa-solid fa-ban"></i> Disable') +
+          '</button>';
+      return '<tr>' +
+        '<td><strong>' + _escapeHtml(u.full_name || u.username) + '</strong></td>' +
+        '<td>' + _escapeHtml(u.username) + '</td>' +
+        '<td class="text-muted" style="font-size:12px">' + _escapeHtml(u.email || '—') + '</td>' +
+        '<td>' + _statusPill(u.is_active) + '</td>' +
+        '<td>' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // ---------- Actions ----------
+  window.numaCreateTeacher = async function() {
+    const u = document.getElementById('staff-new-username').value.trim();
+    const n = document.getElementById('staff-new-name').value.trim();
+    const e = document.getElementById('staff-new-email').value.trim();
+    const out = document.getElementById('staff-new-result');
+    if (!u || !n || !e) { out.innerHTML = '<span style="color:#c00">Please fill in all three fields.</span>'; return; }
+    try {
+      const r = await apiCall('/api/admin/staff', {
+        method: 'POST',
+        body: JSON.stringify({ username: u, full_name: n, email: e })
+      });
+      if (r && r.temp_password) {
+        out.innerHTML =
+          '<div style="padding:12px 14px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;color:#1b5e20">' +
+          '<strong>Teacher created.</strong> Share this temporary password with them — it is shown only once:<br>' +
+          '<code style="display:inline-block;margin-top:8px;padding:6px 10px;background:#fff;border-radius:6px;font-size:14px">' + _escapeHtml(r.temp_password) + '</code>' +
+          '<br><small>They will be forced to choose a new password on first login.</small></div>';
+        document.getElementById('staff-new-username').value = '';
+        document.getElementById('staff-new-name').value = '';
+        document.getElementById('staff-new-email').value = '';
+        _renderStaffTable(await _fetchStaff());
+      } else {
+        out.innerHTML = '<span style="color:#c00">' + _escapeHtml(r?.error || 'Create failed') + '</span>';
+      }
+    } catch (err) {
+      out.innerHTML = '<span style="color:#c00">' + _escapeHtml(err?.message || 'Create failed') + '</span>';
+    }
+  };
+
+  window.numaResetPassword = async function(userId, name) {
+    if (!confirm('Reset password for ' + name + '?\n\nA temporary password will be shown to you once — copy it and share it with the user. They will be required to set a new password on next login.')) return;
+    try {
+      const r = await apiCall('/api/admin/users/' + userId + '/reset-password', {
+        method: 'POST', body: JSON.stringify({})
+      });
+      if (r && r.temp_password) {
+        alert('Temporary password for ' + name + ':\n\n' + r.temp_password + '\n\nShare this with them securely. They will be forced to change it on next login.');
+      } else {
+        alert('Reset failed: ' + (r?.error || 'unknown error'));
+      }
+    } catch (err) {
+      alert('Reset failed: ' + (err?.message || 'unknown error'));
+    }
+  };
+
+  window.numaToggleActive = async function(userId, currentlyDisabled, name) {
+    const willEnable = !!currentlyDisabled;
+    const verb = willEnable ? 'Enable' : 'Disable';
+    if (!confirm(verb + ' account for ' + name + '?' + (willEnable ? '' : ' They will no longer be able to log in until re-enabled.'))) return;
+    try {
+      await apiCall('/api/admin/users/' + userId + '/active', {
+        method: 'PATCH', body: JSON.stringify({ is_active: willEnable })
+      });
+      // Refresh both tables (we don't know which one they're in).
+      const [staff, students] = await Promise.all([_fetchStaff(), _fetchStudents()]);
+      _renderStaffTable(staff);
+      _renderStudentAccountsTable(students);
+    } catch (err) {
+      alert(verb + ' failed: ' + (err?.message || 'unknown error'));
+    }
+  };
+
+  window.numaDeleteTeacher = async function(userId, name) {
+    if (!confirm('PERMANENTLY delete teacher account "' + name + '"? This cannot be undone.')) return;
+    try {
+      await apiCall('/api/admin/staff/' + userId, { method: 'DELETE' });
+      _renderStaffTable(await _fetchStaff());
+    } catch (err) {
+      alert('Delete failed: ' + (err?.message || 'unknown error'));
+    }
+  };
+
+  // ---------- Forced password reset modal ----------
+  async function _ensureForceResetModal() {
+    const u = window.APP && APP.currentUser;
+    if (!u) return;
+    if (!u.must_reset_password) return;
+    if (document.getElementById('numa-force-reset-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'numa-force-reset-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(45,35,25,0.55);display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif';
+    overlay.innerHTML =
+      '<div style="background:#fff;max-width:440px;width:100%;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.25);padding:28px">' +
+        '<h2 style="margin:0 0 10px;font-size:22px;color:#3d3328">Choose a new password</h2>' +
+        '<p style="margin:0 0 16px;color:#6a5d4d">Your NUMA Pilates administrator reset your password. Please choose a new one before continuing.</p>' +
+        '<div class="form-group"><label>New password</label>' +
+          '<input id="numa-force-new" type="password" class="form-control" placeholder="At least 6 characters" autocomplete="new-password"></div>' +
+        '<div class="form-group"><label>Confirm new password</label>' +
+          '<input id="numa-force-confirm" type="password" class="form-control" placeholder="Type it again" autocomplete="new-password"></div>' +
+        '<div id="numa-force-err" style="color:#c00;font-size:13px;min-height:18px"></div>' +
+        '<div style="display:flex;justify-content:flex-end;margin-top:10px">' +
+          '<button id="numa-force-save" style="padding:10px 18px;border:0;background:#A38D78;color:#fff;border-radius:8px;cursor:pointer;font-weight:700">Save &amp; continue</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.getElementById('numa-force-save').addEventListener('click', async () => {
+      const a = document.getElementById('numa-force-new').value;
+      const b = document.getElementById('numa-force-confirm').value;
+      const err = document.getElementById('numa-force-err');
+      if (!a || a.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
+      if (a !== b) { err.textContent = 'Passwords do not match.'; return; }
+      err.textContent = '';
+      try {
+        await apiCall('/api/auth/change-password', {
+          method: 'POST', body: JSON.stringify({ new_password: a })
+        });
+        if (APP.currentUser) APP.currentUser.must_reset_password = false;
+        overlay.remove();
+      } catch (e) {
+        err.textContent = e?.message || 'Save failed';
+      }
+    });
+  }
+
+  // ---------- View routing hook ----------
+  const _origRenderAdminContent = window.renderAdminContent;
+  window.renderAdminContent = function() {
+    const p = (window.APP && APP.viewParams) || {};
+    if (p.view === 'staff' && _isAdminOnly()) {
+      // Kick off async render, but return a placeholder synchronously.
+      setTimeout(_renderStaffPage, 10);
+      return '<div class="text-muted text-center" style="padding:32px">Loading staff…</div>';
+    }
+    return _origRenderAdminContent ? _origRenderAdminContent() : '';
+  };
+
+  // Periodic mount for scoping + card injection + reset modal.
+  function _mountAll() {
+    _scopeOverviewGrid();
+    _addStaffCard();
+    _ensureForceResetModal();
+  }
+  setInterval(_mountAll, 800);
+  document.addEventListener('DOMContentLoaded', _mountAll);
 })();
