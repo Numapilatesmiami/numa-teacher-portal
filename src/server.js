@@ -20,7 +20,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'numa-dev-secret-change-in-production';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'numa2026';
+// This is the RESCUE password only — it always works as an emergency admin
+// login, even after any password change. It is never stored in the DB and never
+// triggers a forced-reset flow. Change it here (and redeploy) to rotate the
+// rescue value.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '17651numa!';
 
 // ===== UPLOADS DIR (persistent on Railway volume if mounted at /data) =====
 const UPLOAD_ROOT = process.env.UPLOAD_DIR || (fs.existsSync('/data') ? '/data/uploads' : path.join(__dirname, '..', 'uploads'));
@@ -146,10 +150,12 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
-    // Hardcoded admin login for first-time access (case-insensitive username)
+    // Emergency admin login: env-var ADMIN_PASSWORD always works as a rescue
+    // password, even if the DB hash was changed. Never gets stored, never
+    // triggers must_reset_password. Case-insensitive username match.
     if (String(username).toLowerCase() === String(ADMIN_USERNAME).toLowerCase() && password === ADMIN_PASSWORD) {
-      // Ensure admin exists in DB
-      let adminRes = await pool.query('SELECT * FROM users WHERE username = $1', [ADMIN_USERNAME]);
+      // Ensure admin exists in DB but do NOT overwrite an existing hash.
+      let adminRes = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [ADMIN_USERNAME]);
       if (adminRes.rowCount === 0) {
         const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
         adminRes = await pool.query(
@@ -160,7 +166,7 @@ app.post('/api/auth/login', async (req, res) => {
       }
       const admin = adminRes.rows[0];
       const token = jwt.sign({ id: admin.id, username: admin.username, role: 'admin' }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({ token, user: { id: admin.id, username: admin.username, full_name: admin.full_name, email: admin.email, role: 'admin' } });
+      return res.json({ token, user: { id: admin.id, username: admin.username, full_name: admin.full_name, email: admin.email, role: 'admin', must_reset_password: false } });
     }
 
     const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);

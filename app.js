@@ -277,7 +277,16 @@ async function handleLogin() {
           userData.email = result.user.email;
           saveUserData(userData);
         }
-        APP.currentUser = userData;
+        // Preserve backend flags (must_reset_password, role, id) — otherwise
+        // the force-reset modal never appears for students who just had their
+        // password reset by an admin.
+        APP.currentUser = Object.assign({}, userData, {
+          id: result.user.id,
+          role: result.user.role,
+          full_name: result.user.full_name,
+          email: result.user.email,
+          must_reset_password: result.user.must_reset_password === true
+        });
         saveSession({ username: user });
         navigate('dashboard');
       }
@@ -8850,4 +8859,106 @@ async function loadAdminHomeworkInbox() {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick);
   window.addEventListener('resize', tick);
   setInterval(tick, 1000);
+})();
+
+// ===== NUMA_AUTH_HARDENING: iOS-safe login + session persistence =====
+(function(){
+  if (window.__NUMA_AUTH_HARDENING__) return;
+  window.__NUMA_AUTH_HARDENING__ = true;
+
+  // Strip stray whitespace on login submission — iOS autofill often appends
+  // a trailing space that silently fails password compare.
+  function _trimInputs() {
+    const u = document.getElementById('login-user');
+    const p = document.getElementById('login-pass');
+    if (u) u.value = String(u.value || '').trim();
+    if (p) p.value = String(p.value || '');  // do NOT trim password internally; only strip trailing whitespace
+    if (p) p.value = p.value.replace(/[\r\n\t\v\f]+/g, '').replace(/[\s\u00A0]+$/, '');
+  }
+
+  // Wrap handleLogin so the trim runs before it reads values.
+  if (typeof window.handleLogin === 'function') {
+    const _orig = window.handleLogin;
+    window.handleLogin = async function(...args) {
+      _trimInputs();
+      return _orig.apply(this, args);
+    };
+  } else {
+    // handleLogin may be declared later; wait a beat.
+    const iv = setInterval(() => {
+      if (typeof window.handleLogin === 'function') {
+        const _orig = window.handleLogin;
+        window.handleLogin = async function(...args) {
+          _trimInputs();
+          return _orig.apply(this, args);
+        };
+        clearInterval(iv);
+      }
+    }, 200);
+    setTimeout(() => clearInterval(iv), 8000);
+  }
+
+  // Auto-restore session on hard refresh: if there is a token in localStorage
+  // but APP.currentUser is null (post-page-refresh state), re-fetch /api/auth/me
+  // and jump straight to the right dashboard.
+  async function _restoreSession() {
+    try {
+      if (!window.APP) return;
+      if (APP.currentUser) return;
+      const token = localStorage.getItem('numa_token');
+      if (!token || token.length < 20) return;
+      const res = await fetch((window.API_BASE || '') + '/api/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) {
+        // Token dead — clear it
+        localStorage.removeItem('numa_token');
+        return;
+      }
+      const u = await res.json();
+      if (!u || !u.id) return;
+      if (u.role === 'admin') {
+        APP.currentUser = { username: u.username, isAdmin: true, ...u };
+        try { saveSession({ username: u.username, isAdmin: true }); } catch(_) {}
+        if (APP.currentView === 'login' || !APP.currentView) navigate('admin');
+      } else if (u.role === 'teacher') {
+        APP.currentUser = { username: u.username, isAdmin: true, isTeacher: true, ...u };
+        try { saveSession({ username: u.username, isAdmin: true, isTeacher: true }); } catch(_) {}
+        if (APP.currentView === 'login' || !APP.currentView) navigate('admin');
+      } else {
+        let userData = null;
+        try { userData = getUserData(u.username); } catch(_) {}
+        if (!userData) {
+          try {
+            userData = createDefaultUserData(u.username, u.full_name);
+            userData.email = u.email;
+            saveUserData(userData);
+          } catch(_) { userData = { username: u.username }; }
+        }
+        APP.currentUser = Object.assign({}, userData, {
+          id: u.id, role: u.role, full_name: u.full_name, email: u.email,
+          must_reset_password: u.must_reset_password === true
+        });
+        try { saveSession({ username: u.username }); } catch(_) {}
+        if (APP.currentView === 'login' || !APP.currentView) navigate('dashboard');
+      }
+    } catch (e) {
+      // silent — never block the login screen
+    }
+  }
+  // Run once shortly after boot
+  setTimeout(_restoreSession, 500);
+
+  // "Forgot password" link on the login screen for students
+  function _injectForgotLink() {
+    const form = document.getElementById('login-form');
+    if (!form) return;
+    if (form.querySelector('.numa-forgot-link')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'numa-forgot-link';
+    wrap.style.cssText = 'text-align:center;margin-top:10px;font-size:13px;color:#6a5d4d';
+    wrap.innerHTML = '<span>Trouble signing in? Ask your instructor to reset your password at <a href="mailto:info@numapilatesmiami.com" style="color:#A38D78;font-weight:600">info@numapilatesmiami.com</a>.</span>';
+    form.appendChild(wrap);
+  }
+  setInterval(_injectForgotLink, 1000);
 })();
