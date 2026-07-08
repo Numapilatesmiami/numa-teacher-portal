@@ -8394,7 +8394,7 @@ async function loadAdminHomeworkInbox() {
         <td>${active
           ? '<span class="badge badge-complete" style="background:#e8f5e9;color:#2e7d32;">Active</span>'
           : '<span class="badge" style="background:#f5efe4;color:#6a5d4d;">Disabled</span>'}</td>
-        <td>${Number(r.student_count || 0)}</td>
+        <td><a href="javascript:void(0)" onclick="numaEnrollmentShowStudents('${esc(r.code)}')" style="color:#A38D78;font-weight:600;text-decoration:underline;">${Number(r.student_count || 0)}</a></td>
         <td style="text-align:right;white-space:nowrap;">
           <button class="btn btn-sm btn-secondary" onclick="numaEnrollmentEdit('${esc(r.code)}')"><i class="fa-solid fa-pen"></i> Edit</button>
           <button class="btn btn-sm" style="background:${active ? '#fff3e0' : '#e8f5e9'};color:${active ? '#e65100' : '#2e7d32'};" onclick="numaEnrollmentToggle('${esc(r.code)}', ${active ? 'false' : 'true'})">
@@ -8963,4 +8963,81 @@ async function loadAdminHomeworkInbox() {
     form.appendChild(wrap);
   }
   setInterval(_injectForgotLink, 1000);
+})();
+
+// ===== NUMA_ENROLLMENT_STUDENT_DRAWER =====
+(function(){
+  if (window.__NUMA_EC_STUDENTS__) return;
+  window.__NUMA_EC_STUDENTS__ = true;
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function api(path, opts){ return typeof apiCall === 'function' ? apiCall(path, opts) : Promise.resolve(null); }
+  function fmtDate(d){
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+    catch(_){ return ''; }
+  }
+
+  function open(html){
+    let m = document.getElementById('numa-edit-modal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'numa-edit-modal';
+      m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+      m.addEventListener('click', (e) => { if (e.target === m) close(); });
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div style="background:#fff;max-width:640px;width:100%;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow:auto;">' + html + '</div>';
+    m.style.display = 'flex';
+  }
+  function close(){
+    const m = document.getElementById('numa-edit-modal');
+    if (m) m.style.display = 'none';
+  }
+  window.numaCloseEditModal = close;
+
+  window.numaEnrollmentShowStudents = async function(code){
+    open(
+      '<div style="padding:20px 22px;border-bottom:1px solid #e6dfd1;display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="margin:0;color:#3d3328;font-size:18px;">Students enrolled with <span style="font-family:monospace;color:#A38D78;letter-spacing:2px;">' + esc(code) + '</span></h3>' +
+        '<button class="btn btn-ghost btn-sm" onclick="numaCloseEditModal()"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div id="numa-ec-students-body" style="padding:16px 22px 22px;">' +
+        '<p class="text-muted">Loading...</p>' +
+      '</div>'
+    );
+    const students = await api('/api/admin/students');
+    const body = document.getElementById('numa-ec-students-body');
+    if (!body) return;
+    if (!Array.isArray(students)) {
+      body.innerHTML = '<p class="text-muted">Could not load students.</p>';
+      return;
+    }
+    const matches = students.filter(s => String(s.enrollment_code || '').toUpperCase() === String(code).toUpperCase());
+    if (matches.length === 0) {
+      body.innerHTML = '<p class="text-muted" style="text-align:center;padding:24px 0;">No students have registered with this code yet.</p>';
+      return;
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+    for (const s of matches) {
+      html += `
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e6dfd1;border-radius:12px;background:#fafaf7;">
+          <div style="width:38px;height:38px;border-radius:50%;background:#A38D78;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;">
+            ${esc((s.full_name || s.username || '?').charAt(0).toUpperCase())}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;color:#3d3328;">${esc(s.full_name || s.username)}</div>
+            <div style="font-size:12px;color:#8a7d6a;">${esc(s.email || '')}</div>
+            <div style="font-size:11px;color:#a89680;margin-top:2px;">
+              Joined ${fmtDate(s.created_at)}${s.username && s.username !== s.full_name ? ' · @' + esc(s.username) : ''}
+            </div>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="numaCloseEditModal();navigate('admin',{view:'student',studentId:${Number(s.id)}})" title="Open student profile">
+            <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>`;
+    }
+    html += '</div>';
+    body.innerHTML = html;
+  };
 })();
