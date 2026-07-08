@@ -7,11 +7,23 @@
   <meta name="description" content="NUMA Pilates Certification Portal — Comprehensive Pilates teacher training program in Homestead, FL">
   <link rel="icon" type="image/png" href="numa-logo.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css?v=20260708b">
+  <link rel="stylesheet" href="styles.css?v=20260708c">
   <script>
     // When served from the same Railway host as the API, leave empty for same-origin requests.
     // If you ever host the portal elsewhere again, set this to your Railway URL.
-    window.NUMA_API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3000' : '';
+    // Point at the Railway backend when the frontend is hosted elsewhere
+    // (e.g. netlify.app). On Railway same-origin, leave empty.
+    (function(){
+      var h = window.location.hostname;
+      if (h === 'localhost' || h === '127.0.0.1') {
+        window.NUMA_API_BASE = 'http://localhost:3000';
+      } else if (h.indexOf('railway.app') !== -1) {
+        window.NUMA_API_BASE = '';
+      } else {
+        // Any other host (netlify, custom domain) — talk to Railway backend
+        window.NUMA_API_BASE = 'https://numa-teacher-portal-production.up.railway.app';
+      }
+    })();
   </script>
 </head>
 <body>
@@ -23,7 +35,7 @@
     </div>
   </div>
 
-  <script src="content.js?v=20260708b"></script>
-  <script src="app.js?v=20260708b"></script>
+  <script src="content.js?v=20260708c"></script>
+  <script src="app.js?v=20260708c"></script>
 </body>
 </html>
