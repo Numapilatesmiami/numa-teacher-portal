@@ -8437,3 +8437,202 @@ async function loadAdminHomeworkInbox() {
     loadEnrollmentCodes();
   };
 })();
+
+// ===== NUMA_SCHEDULE_EDIT: inline edit for schedule + bulletin =====
+(function(){
+  if (window.__NUMA_SCHEDULE_EDIT__) return;
+  window.__NUMA_SCHEDULE_EDIT__ = true;
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function api(path, opts) { return (typeof apiCall === 'function') ? apiCall(path, opts) : Promise.resolve(null); }
+
+  // Convert ISO -> value for <input type="datetime-local"> in local time
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const pad = n => String(n).padStart(2,'0');
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function openModal(innerHTML) {
+    let m = document.getElementById('numa-edit-modal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'numa-edit-modal';
+      m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+      m.addEventListener('click', (e) => { if (e.target === m) closeModal(); });
+      document.body.appendChild(m);
+    }
+    m.innerHTML = '<div style="background:#fff;max-width:520px;width:100%;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow:auto;">' + innerHTML + '</div>';
+    m.style.display = 'flex';
+  }
+  function closeModal(){
+    const m = document.getElementById('numa-edit-modal');
+    if (m) m.style.display = 'none';
+  }
+  window.numaCloseEditModal = closeModal;
+
+  // ---------- Schedule event edit ----------
+  window.numaEditEvent = async function(id) {
+    const list = await api('/api/schedule');
+    const ev = Array.isArray(list) ? list.find(x => Number(x.id) === Number(id)) : null;
+    if (!ev) { alert('Could not load that event.'); return; }
+    openModal(
+      '<div style="padding:20px 22px;border-bottom:1px solid #e6dfd1;display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="margin:0;color:#3d3328;font-size:18px;">Edit event</h3>' +
+        '<button class="btn btn-ghost btn-sm" onclick="numaCloseEditModal()"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div style="padding:20px 22px;display:flex;flex-direction:column;gap:12px;">' +
+        '<label style="font-size:13px;color:#6a5d4d;">Title' +
+          '<input id="numa-ev-title" type="text" value="' + esc(ev.title || '') + '" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' +
+        '</label>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<label style="flex:1;font-size:13px;color:#6a5d4d;">Starts' +
+            '<input id="numa-ev-start" type="datetime-local" value="' + toLocalInput(ev.starts_at) + '" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' +
+          '</label>' +
+          '<label style="flex:1;font-size:13px;color:#6a5d4d;">Ends' +
+            '<input id="numa-ev-end" type="datetime-local" value="' + toLocalInput(ev.ends_at) + '" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' +
+          '</label>' +
+        '</div>' +
+        '<label style="font-size:13px;color:#6a5d4d;">Location' +
+          '<input id="numa-ev-loc" type="text" value="' + esc(ev.location || '') + '" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' +
+        '</label>' +
+        '<label style="font-size:13px;color:#6a5d4d;">Description' +
+          '<textarea id="numa-ev-desc" rows="4" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' + esc(ev.description || '') + '</textarea>' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3d3328;">' +
+          '<input id="numa-ev-required" type="checkbox"' + (ev.required ? ' checked' : '') + '> Required attendance' +
+        '</label>' +
+        '<div id="numa-ev-status" style="font-size:13px;min-height:18px;"></div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">' +
+          '<button class="btn btn-secondary" onclick="numaCloseEditModal()">Cancel</button>' +
+          '<button class="btn btn-primary" onclick="numaSaveEvent(' + Number(id) + ')"><i class="fa-solid fa-check"></i> Save changes</button>' +
+        '</div>' +
+      '</div>'
+    );
+  };
+
+  window.numaSaveEvent = async function(id) {
+    const t = document.getElementById('numa-ev-title').value.trim();
+    const s = document.getElementById('numa-ev-start').value;
+    const e = document.getElementById('numa-ev-end').value;
+    const loc = document.getElementById('numa-ev-loc').value.trim();
+    const desc = document.getElementById('numa-ev-desc').value.trim();
+    const req = document.getElementById('numa-ev-required').checked;
+    const st = document.getElementById('numa-ev-status');
+    if (!t || !s) { st.innerHTML = '<span style="color:#c00">Title and start time are required.</span>'; return; }
+    try {
+      const body = {
+        title: t,
+        starts_at: new Date(s).toISOString(),
+        ends_at: e ? new Date(e).toISOString() : null,
+        location: loc,
+        description: desc,
+        required: req
+      };
+      const res = await api('/api/schedule/' + id, { method: 'PUT', body: JSON.stringify(body) });
+      if (!res || res.error) { st.innerHTML = '<span style="color:#c00">' + esc(res?.error || 'Save failed') + '</span>'; return; }
+      closeModal();
+      // Refresh admin list if visible
+      if (typeof window.__numaReloadSchedule === 'function') window.__numaReloadSchedule();
+      const btn = document.querySelector('[onclick*="_renderAdminSchedulePage"]');
+      if (!btn && typeof navigate === 'function' && document.getElementById('sch-list')) {
+        // trigger reload by clicking hash of same page
+        const list = await api('/api/schedule');
+        const wrap = document.getElementById('sch-list');
+        if (wrap && Array.isArray(list)) {
+          // Rebuild using the module's own renderer if we can find it
+          wrap.dispatchEvent(new CustomEvent('numa-refresh'));
+        }
+      }
+      // Simple full-refresh fallback: click the current schedule nav card
+      if (typeof navigate === 'function') navigate('admin', { view: 'schedule' });
+    } catch (err) {
+      st.innerHTML = '<span style="color:#c00">' + esc(err?.message || 'Failed') + '</span>';
+    }
+  };
+
+  // ---------- Bulletin post edit ----------
+  window.numaEditBulletin = async function(id) {
+    const list = await api('/api/bulletin');
+    const p = Array.isArray(list) ? list.find(x => Number(x.id) === Number(id)) : null;
+    if (!p) { alert('Could not load that post.'); return; }
+    openModal(
+      '<div style="padding:20px 22px;border-bottom:1px solid #e6dfd1;display:flex;justify-content:space-between;align-items:center;">' +
+        '<h3 style="margin:0;color:#3d3328;font-size:18px;">Edit post</h3>' +
+        '<button class="btn btn-ghost btn-sm" onclick="numaCloseEditModal()"><i class="fa-solid fa-xmark"></i></button>' +
+      '</div>' +
+      '<div style="padding:20px 22px;display:flex;flex-direction:column;gap:12px;">' +
+        '<label style="font-size:13px;color:#6a5d4d;">Title' +
+          '<input id="numa-bul-title" type="text" value="' + esc(p.title || '') + '" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' +
+        '</label>' +
+        '<label style="font-size:13px;color:#6a5d4d;">Message' +
+          '<textarea id="numa-bul-body" rows="6" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;margin-top:4px;">' + esc(p.body || '') + '</textarea>' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3d3328;">' +
+          '<input id="numa-bul-pinned" type="checkbox"' + (p.pinned ? ' checked' : '') + '> Pin to top' +
+        '</label>' +
+        '<div id="numa-bul-status" style="font-size:13px;min-height:18px;"></div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">' +
+          '<button class="btn btn-secondary" onclick="numaCloseEditModal()">Cancel</button>' +
+          '<button class="btn btn-primary" onclick="numaSaveBulletin(' + Number(id) + ')"><i class="fa-solid fa-check"></i> Save changes</button>' +
+        '</div>' +
+      '</div>'
+    );
+  };
+
+  window.numaSaveBulletin = async function(id) {
+    const t = document.getElementById('numa-bul-title').value.trim();
+    const b = document.getElementById('numa-bul-body').value.trim();
+    const pinned = document.getElementById('numa-bul-pinned').checked;
+    const st = document.getElementById('numa-bul-status');
+    if (!t || !b) { st.innerHTML = '<span style="color:#c00">Title and message are required.</span>'; return; }
+    try {
+      const res = await api('/api/bulletin/' + id, { method: 'PUT', body: JSON.stringify({ title: t, body: b, pinned }) });
+      if (!res || res.error) { st.innerHTML = '<span style="color:#c00">' + esc(res?.error || 'Save failed') + '</span>'; return; }
+      closeModal();
+      if (typeof navigate === 'function') navigate('admin', { view: 'bulletin' });
+    } catch (err) {
+      st.innerHTML = '<span style="color:#c00">' + esc(err?.message || 'Failed') + '</span>';
+    }
+  };
+
+  // ---------- Inject Edit buttons into existing admin lists ----------
+  function injectEditButtons() {
+    // Schedule list rows
+    const schList = document.getElementById('sch-list');
+    if (schList) {
+      schList.querySelectorAll('[onclick^="numaDeleteEvent("]').forEach(delBtn => {
+        if (delBtn.dataset.numaEditInjected) return;
+        const m = /numaDeleteEvent\((\d+)\)/.exec(delBtn.getAttribute('onclick') || '');
+        if (!m) return;
+        const id = m[1];
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-ghost btn-sm';
+        editBtn.style.color = '#A38D78';
+        editBtn.style.marginRight = '4px';
+        editBtn.innerHTML = '<i class="fa-solid fa-pen"></i>';
+        editBtn.title = 'Edit event';
+        editBtn.setAttribute('onclick', 'numaEditEvent(' + id + ')');
+        delBtn.parentNode.insertBefore(editBtn, delBtn);
+        delBtn.dataset.numaEditInjected = '1';
+      });
+    }
+    // Bulletin list rows
+    document.querySelectorAll('[onclick^="numaDeleteBulletin("]').forEach(delBtn => {
+      if (delBtn.dataset.numaEditInjected) return;
+      const m = /numaDeleteBulletin\((\d+)\)/.exec(delBtn.getAttribute('onclick') || '');
+      if (!m) return;
+      const id = m[1];
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn btn-ghost btn-sm';
+      editBtn.style.color = '#A38D78';
+      editBtn.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+      editBtn.setAttribute('onclick', 'numaEditBulletin(' + id + ')');
+      delBtn.parentNode.insertBefore(editBtn, delBtn);
+      delBtn.dataset.numaEditInjected = '1';
+    });
+  }
+  setInterval(injectEditButtons, 800);
+})();
