@@ -7761,3 +7761,534 @@ async function loadAdminHomeworkInbox() {
   setInterval(_mountAll, 800);
   document.addEventListener('DOMContentLoaded', _mountAll);
 })();
+
+// ==========================================================================
+// BULLETIN + SCHEDULE + MOBILE APP SHELL
+// ==========================================================================
+(function NUMA_DASH_ADDONS(){
+  'use strict';
+
+  const CACHE = { bulletin: null, schedule: null, ts: 0 };
+
+  function _isStudent() {
+    const u = window.APP && APP.currentUser;
+    return !!(u && !u.isAdmin);
+  }
+  function _isStaff() {
+    const u = window.APP && APP.currentUser;
+    return !!(u && u.isAdmin); // admin or teacher (both use isAdmin=true shell)
+  }
+  function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function _fmtDate(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch (_) { return iso; }
+  }
+  function _fmtRange(startISO, endISO) {
+    if (!startISO) return '';
+    const s = new Date(startISO);
+    const dateLabel = s.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const t1 = s.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (!endISO) return dateLabel + ' &middot; ' + t1;
+    const e = new Date(endISO);
+    const sameDay = e.toDateString() === s.toDateString();
+    const t2 = e.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return sameDay
+      ? dateLabel + ' &middot; ' + t1 + ' \u2013 ' + t2
+      : dateLabel + ' &middot; ' + t1 + ' \u2013 ' + e.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + t2;
+  }
+
+  async function _load(force) {
+    if (!force && CACHE.bulletin && (Date.now() - CACHE.ts) < 20000) return CACHE;
+    try {
+      const [b, s] = await Promise.all([
+        apiCall('/api/bulletin').catch(() => []),
+        apiCall('/api/schedule').catch(() => [])
+      ]);
+      CACHE.bulletin = Array.isArray(b) ? b : [];
+      CACHE.schedule = Array.isArray(s) ? s : [];
+      CACHE.ts = Date.now();
+    } catch (_) {
+      CACHE.bulletin = CACHE.bulletin || [];
+      CACHE.schedule = CACHE.schedule || [];
+    }
+    return CACHE;
+  }
+
+  // ---------- Student dashboard injection ----------
+  function _renderBulletinList(posts) {
+    if (!posts || !posts.length) {
+      return '<div class="text-muted text-center" style="padding:20px 12px">Nothing on the bulletin board yet.</div>';
+    }
+    return posts.map((p) => {
+      const bodyHtml = _esc(p.body).replace(/\n/g, '<br>');
+      return '<div class="numa-bulletin-item" style="padding:14px 4px;border-bottom:1px solid var(--cream-darker,#e6dfd1)">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+          (p.pinned ? '<i class="fa-solid fa-thumbtack" style="color:#A38D78"></i>' : '') +
+          '<strong style="font-size:15px;color:#3d3328">' + _esc(p.title) + '</strong>' +
+        '</div>' +
+        '<div style="font-size:14px;line-height:1.6;color:#4a4038">' + bodyHtml + '</div>' +
+        '<div style="font-size:11px;color:#8a7d6a;margin-top:6px">' +
+          (p.author_name ? _esc(p.author_name) + ' &middot; ' : '') + _fmtDate(p.created_at) +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+  function _renderScheduleList(events) {
+    if (!events || !events.length) {
+      return '<div class="text-muted text-center" style="padding:20px 12px">No upcoming in-person sessions.</div>';
+    }
+    return events.map((ev) => {
+      const badge = ev.required
+        ? '<span style="background:#fff3e0;color:#e65100;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">Required</span>'
+        : '<span style="background:#e3f2fd;color:#1565c0;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">Optional</span>';
+      return '<div class="numa-sched-item" style="display:flex;gap:12px;padding:14px 4px;border-bottom:1px solid var(--cream-darker,#e6dfd1)">' +
+        '<div style="flex:0 0 44px;text-align:center">' +
+          '<div style="background:#A38D78;color:#fff;border-radius:8px;padding:6px 4px;font-size:11px;font-weight:700;text-transform:uppercase">' +
+            new Date(ev.starts_at).toLocaleString(undefined, { month: 'short' }) +
+          '</div>' +
+          '<div style="font-size:20px;font-weight:800;color:#3d3328;margin-top:2px">' +
+            new Date(ev.starts_at).getDate() +
+          '</div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">' +
+            '<strong style="font-size:15px;color:#3d3328">' + _esc(ev.title) + '</strong>' +
+            badge +
+          '</div>' +
+          '<div style="font-size:12px;color:#6a5d4d;margin-top:2px"><i class="fa-regular fa-clock"></i> ' + _fmtRange(ev.starts_at, ev.ends_at) + '</div>' +
+          (ev.location ? '<div style="font-size:12px;color:#6a5d4d;margin-top:2px"><i class="fa-solid fa-location-dot"></i> ' + _esc(ev.location) + '</div>' : '') +
+          (ev.description ? '<div style="font-size:13px;color:#4a4038;margin-top:6px;line-height:1.5">' + _esc(ev.description) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function _ensureStudentDashboardAddons() {
+    if (!_isStudent()) return;
+    if (APP.currentView !== 'dashboard') {
+      const p = document.getElementById('numa-dash-addons');
+      if (p) p.remove();
+      return;
+    }
+    const main = document.querySelector('main.main-content');
+    if (!main) return;
+    let host = document.getElementById('numa-dash-addons');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'numa-dash-addons';
+      host.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:24px 0';
+      // Place at the top of main content so it's the first thing students see.
+      const firstChild = main.firstElementChild;
+      if (firstChild && firstChild.nextSibling) {
+        main.insertBefore(host, firstChild.nextSibling);
+      } else {
+        main.appendChild(host);
+      }
+      host.innerHTML =
+        '<div class="card slide-up"><div class="card-body">' +
+          '<h2 style="margin:0 0 8px;font-size:18px;color:#3d3328"><i class="fa-solid fa-bullhorn" style="color:#A38D78;margin-right:6px"></i>Bulletin Board</h2>' +
+          '<div id="numa-bulletin-list"><div class="text-muted">Loading…</div></div>' +
+        '</div></div>' +
+        '<div class="card slide-up"><div class="card-body">' +
+          '<h2 style="margin:0 0 8px;font-size:18px;color:#3d3328"><i class="fa-regular fa-calendar" style="color:#A38D78;margin-right:6px"></i>In-Person Schedule</h2>' +
+          '<div id="numa-schedule-list"><div class="text-muted">Loading…</div></div>' +
+        '</div></div>';
+    }
+    _load().then(({ bulletin, schedule }) => {
+      const bl = document.getElementById('numa-bulletin-list');
+      const sl = document.getElementById('numa-schedule-list');
+      if (bl) bl.innerHTML = _renderBulletinList(bulletin);
+      if (sl) sl.innerHTML = _renderScheduleList(schedule);
+    });
+  }
+
+  // ---------- Admin: bulletin + schedule editor page ----------
+  async function _renderAdminBulletinPage() {
+    const wrap = document.querySelector('.admin-content-wrap');
+    if (!wrap) return;
+    wrap.innerHTML =
+      '<div class="page-header fade-in">' +
+        '<h1><i class="fa-solid fa-bullhorn"></i> Bulletin Board</h1>' +
+        '<p>Post welcome messages, teacher introductions, or announcements. Everyone signed in sees these on their dashboard.</p>' +
+      '</div>' +
+      '<div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="navigate(\'admin\')">' +
+        '<i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button></div>' +
+      '<div class="card slide-up"><div class="card-body">' +
+        '<h3 style="margin:0 0 12px">New post</h3>' +
+        '<div class="form-group"><label>Title</label>' +
+          '<input id="bul-title" class="form-control" placeholder="Welcome to NUMA Pilates"></div>' +
+        '<div class="form-group"><label>Body</label>' +
+          '<textarea id="bul-body" class="form-control" rows="6" placeholder="Meet your teachers, and welcome!"></textarea></div>' +
+        '<div class="form-group"><label style="display:flex;align-items:center;gap:8px">' +
+          '<input id="bul-pinned" type="checkbox"> Pin to top</label></div>' +
+        '<button class="btn btn-primary" onclick="numaCreateBulletin()">' +
+          '<i class="fa-solid fa-plus"></i> Publish</button>' +
+        '<div id="bul-status" style="margin-top:10px"></div>' +
+      '</div></div>' +
+      '<h2 class="admin-section-heading" style="margin-top:24px">All posts</h2>' +
+      '<div id="bul-list" class="card"><div class="card-body"><div class="text-muted">Loading…</div></div></div>';
+    const { bulletin } = await _load(true);
+    _renderAdminBulletinList(bulletin);
+  }
+  function _renderAdminBulletinList(posts) {
+    const el = document.getElementById('bul-list');
+    if (!el) return;
+    if (!posts || !posts.length) {
+      el.innerHTML = '<div class="card-body text-muted text-center">No posts yet.</div>';
+      return;
+    }
+    el.innerHTML = '<div class="card-body" style="padding:8px">' + posts.map((p) => (
+      '<div style="padding:14px;border-bottom:1px solid #e6dfd1">' +
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:6px">' +
+          '<strong style="font-size:15px;color:#3d3328">' +
+            (p.pinned ? '<i class="fa-solid fa-thumbtack" style="color:#A38D78;margin-right:6px"></i>' : '') +
+            _esc(p.title) +
+          '</strong>' +
+          '<div style="display:flex;gap:6px">' +
+            '<button class="btn btn-ghost btn-sm" onclick="numaTogglePin(' + p.id + ',' + (!p.pinned) + ')">' +
+              (p.pinned ? 'Unpin' : 'Pin') + '</button>' +
+            '<button class="btn btn-ghost btn-sm" style="color:#c00" onclick="numaDeleteBulletin(' + p.id + ')">' +
+              '<i class="fa-solid fa-trash"></i> Delete</button>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:14px;color:#4a4038;line-height:1.6">' + _esc(p.body).replace(/\n/g, '<br>') + '</div>' +
+        '<div style="font-size:11px;color:#8a7d6a;margin-top:6px">' +
+          (p.author_name ? _esc(p.author_name) + ' &middot; ' : '') + _fmtDate(p.created_at) +
+        '</div>' +
+      '</div>'
+    )).join('') + '</div>';
+  }
+  window.numaCreateBulletin = async function() {
+    const t = document.getElementById('bul-title').value.trim();
+    const b = document.getElementById('bul-body').value.trim();
+    const pinned = document.getElementById('bul-pinned').checked;
+    const st = document.getElementById('bul-status');
+    if (!t || !b) { st.innerHTML = '<span style="color:#c00">Title and body are required.</span>'; return; }
+    try {
+      await apiCall('/api/bulletin', { method: 'POST', body: JSON.stringify({ title: t, body: b, pinned }) });
+      document.getElementById('bul-title').value = '';
+      document.getElementById('bul-body').value = '';
+      document.getElementById('bul-pinned').checked = false;
+      st.innerHTML = '<span style="color:#2e7d32">Published.</span>';
+      const { bulletin } = await _load(true);
+      _renderAdminBulletinList(bulletin);
+    } catch (e) {
+      st.innerHTML = '<span style="color:#c00">' + _esc(e?.message || 'Failed') + '</span>';
+    }
+  };
+  window.numaTogglePin = async function(id, pinned) {
+    try {
+      await apiCall('/api/bulletin/' + id, { method: 'PUT', body: JSON.stringify({ pinned }) });
+      const { bulletin } = await _load(true);
+      _renderAdminBulletinList(bulletin);
+    } catch (e) { alert('Update failed: ' + (e?.message || '')); }
+  };
+  window.numaDeleteBulletin = async function(id) {
+    if (!confirm('Delete this post?')) return;
+    try {
+      await apiCall('/api/bulletin/' + id, { method: 'DELETE' });
+      const { bulletin } = await _load(true);
+      _renderAdminBulletinList(bulletin);
+    } catch (e) { alert('Delete failed: ' + (e?.message || '')); }
+  };
+
+  async function _renderAdminSchedulePage() {
+    const wrap = document.querySelector('.admin-content-wrap');
+    if (!wrap) return;
+    wrap.innerHTML =
+      '<div class="page-header fade-in">' +
+        '<h1><i class="fa-regular fa-calendar"></i> In-Person Schedule</h1>' +
+        '<p>Add lectures and supervised sessions. Students see these on their dashboard.</p>' +
+      '</div>' +
+      '<div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="navigate(\'admin\')">' +
+        '<i class="fa-solid fa-arrow-left"></i> Back to Dashboard</button></div>' +
+      '<div class="card slide-up"><div class="card-body">' +
+        '<h3 style="margin:0 0 12px">Add an event</h3>' +
+        '<div class="form-group"><label>Title</label>' +
+          '<input id="sch-title" class="form-control" placeholder="Module 3 In-Person Lecture"></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          '<div class="form-group"><label>Starts</label>' +
+            '<input id="sch-start" type="datetime-local" class="form-control"></div>' +
+          '<div class="form-group"><label>Ends (optional)</label>' +
+            '<input id="sch-end" type="datetime-local" class="form-control"></div>' +
+        '</div>' +
+        '<div class="form-group"><label>Location</label>' +
+          '<input id="sch-loc" class="form-control" placeholder="NUMA Pilates Studio &middot; 123 Main St, Miami"></div>' +
+        '<div class="form-group"><label>Notes</label>' +
+          '<textarea id="sch-desc" class="form-control" rows="3" placeholder="What to bring, what will be covered, etc."></textarea></div>' +
+        '<div class="form-group"><label style="display:flex;align-items:center;gap:8px">' +
+          '<input id="sch-required" type="checkbox" checked> Required attendance</label></div>' +
+        '<button class="btn btn-primary" onclick="numaCreateEvent()">' +
+          '<i class="fa-solid fa-plus"></i> Add to schedule</button>' +
+        '<div id="sch-status" style="margin-top:10px"></div>' +
+      '</div></div>' +
+      '<h2 class="admin-section-heading" style="margin-top:24px">Upcoming events</h2>' +
+      '<div id="sch-list" class="card"><div class="card-body"><div class="text-muted">Loading…</div></div></div>';
+    const { schedule } = await _load(true);
+    _renderAdminScheduleList(schedule);
+  }
+  function _renderAdminScheduleList(evs) {
+    const el = document.getElementById('sch-list');
+    if (!el) return;
+    if (!evs || !evs.length) {
+      el.innerHTML = '<div class="card-body text-muted text-center">No events yet.</div>';
+      return;
+    }
+    el.innerHTML = '<div class="card-body" style="padding:8px">' + evs.map((ev) => (
+      '<div style="padding:14px;border-bottom:1px solid #e6dfd1;display:flex;justify-content:space-between;gap:8px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<strong style="font-size:15px;color:#3d3328">' + _esc(ev.title) + '</strong>' +
+          '<div style="font-size:12px;color:#6a5d4d;margin-top:2px">' + _fmtRange(ev.starts_at, ev.ends_at) + '</div>' +
+          (ev.location ? '<div style="font-size:12px;color:#6a5d4d;margin-top:2px">' + _esc(ev.location) + '</div>' : '') +
+          (ev.description ? '<div style="font-size:13px;color:#4a4038;margin-top:6px">' + _esc(ev.description) + '</div>' : '') +
+        '</div>' +
+        '<div><button class="btn btn-ghost btn-sm" style="color:#c00" onclick="numaDeleteEvent(' + ev.id + ')">' +
+          '<i class="fa-solid fa-trash"></i></button></div>' +
+      '</div>'
+    )).join('') + '</div>';
+  }
+  window.numaCreateEvent = async function() {
+    const t = document.getElementById('sch-title').value.trim();
+    const s = document.getElementById('sch-start').value;
+    const e = document.getElementById('sch-end').value;
+    const loc = document.getElementById('sch-loc').value.trim();
+    const desc = document.getElementById('sch-desc').value.trim();
+    const req = document.getElementById('sch-required').checked;
+    const st = document.getElementById('sch-status');
+    if (!t || !s) { st.innerHTML = '<span style="color:#c00">Title and start time are required.</span>'; return; }
+    try {
+      // datetime-local -> ISO
+      const startISO = new Date(s).toISOString();
+      const endISO = e ? new Date(e).toISOString() : null;
+      await apiCall('/api/schedule', {
+        method: 'POST',
+        body: JSON.stringify({ title: t, starts_at: startISO, ends_at: endISO, location: loc, description: desc, required: req })
+      });
+      document.getElementById('sch-title').value = '';
+      document.getElementById('sch-start').value = '';
+      document.getElementById('sch-end').value = '';
+      document.getElementById('sch-loc').value = '';
+      document.getElementById('sch-desc').value = '';
+      st.innerHTML = '<span style="color:#2e7d32">Added.</span>';
+      const { schedule } = await _load(true);
+      _renderAdminScheduleList(schedule);
+    } catch (err) {
+      st.innerHTML = '<span style="color:#c00">' + _esc(err?.message || 'Failed') + '</span>';
+    }
+  };
+  window.numaDeleteEvent = async function(id) {
+    if (!confirm('Remove this event?')) return;
+    try {
+      await apiCall('/api/schedule/' + id, { method: 'DELETE' });
+      const { schedule } = await _load(true);
+      _renderAdminScheduleList(schedule);
+    } catch (e) { alert('Delete failed: ' + (e?.message || '')); }
+  };
+
+  // ---------- Admin overview: add cards for bulletin + schedule ----------
+  function _addAdminCards() {
+    if (!_isStaff()) return;
+    const grid = document.querySelector('.admin-overview-grid');
+    if (!grid) return;
+    if (!grid.querySelector('[data-numa-bul-card]')) {
+      const c = document.createElement('div');
+      c.className = 'admin-overview-card';
+      c.setAttribute('data-numa-bul-card', '1');
+      c.setAttribute('onclick', "navigate('admin',{view:'bulletin'})");
+      c.innerHTML =
+        '<div class="admin-overview-icon"><i class="fa-solid fa-bullhorn"></i></div>' +
+        '<h3>Bulletin Board</h3><p>Welcome messages, teacher intros, announcements</p>';
+      grid.appendChild(c);
+    }
+    if (!grid.querySelector('[data-numa-sch-card]')) {
+      const c = document.createElement('div');
+      c.className = 'admin-overview-card';
+      c.setAttribute('data-numa-sch-card', '1');
+      c.setAttribute('onclick', "navigate('admin',{view:'schedule'})");
+      c.innerHTML =
+        '<div class="admin-overview-icon"><i class="fa-regular fa-calendar"></i></div>' +
+        '<h3>In-Person Schedule</h3><p>Lectures and supervised sessions students must attend</p>';
+      grid.appendChild(c);
+    }
+  }
+
+  // ---------- View routing ----------
+  const _origRAC = window.renderAdminContent;
+  window.renderAdminContent = function() {
+    const p = (window.APP && APP.viewParams) || {};
+    if (p.view === 'bulletin') { setTimeout(_renderAdminBulletinPage, 10); return '<div class="text-muted text-center" style="padding:32px">Loading bulletin…</div>'; }
+    if (p.view === 'schedule') { setTimeout(_renderAdminSchedulePage, 10); return '<div class="text-muted text-center" style="padding:32px">Loading schedule…</div>'; }
+    return _origRAC ? _origRAC() : '';
+  };
+
+  // ---------- Mobile bottom nav (student) ----------
+  function _ensureBottomNav() {
+    if (!_isStudent()) {
+      const el = document.getElementById('numa-bottom-nav');
+      if (el) el.remove();
+      document.body.style.paddingBottom = '';
+      return;
+    }
+    const v = APP.currentView;
+    let el = document.getElementById('numa-bottom-nav');
+    if (!el) {
+      el = document.createElement('nav');
+      el.id = 'numa-bottom-nav';
+      el.className = 'numa-bottom-nav';
+      el.innerHTML =
+        '<button data-view="dashboard" onclick="navigate(\'dashboard\')"><i class="fa-solid fa-house"></i><span>Home</span></button>' +
+        '<button data-view="modules" onclick="navigateModule(1)"><i class="fa-solid fa-book-open"></i><span>Learn</span></button>' +
+        '<button data-view="hours" onclick="navigate(\'hours\')"><i class="fa-regular fa-clock"></i><span>Hours</span></button>' +
+        '<button data-view="questions" onclick="navigate(\'questions\')"><i class="fa-regular fa-envelope"></i><span>Inbox</span></button>' +
+        '<button data-view="forum" onclick="navigate(\'forum\')"><i class="fa-regular fa-comments"></i><span>Forum</span></button>';
+      document.body.appendChild(el);
+    }
+    // Set active
+    el.querySelectorAll('button').forEach((b) => {
+      const dv = b.getAttribute('data-view');
+      const active = (dv === v) || (dv === 'modules' && v === 'module');
+      b.classList.toggle('active', active);
+    });
+  }
+
+  // ---------- Runtime CSS injection (mobile app shell) ----------
+  function _ensureMobileCSS() {
+    if (document.getElementById('numa-mobile-css')) return;
+    const style = document.createElement('style');
+    style.id = 'numa-mobile-css';
+    style.textContent = `
+      /* ===== NUMA mobile app shell (Google Classroom-style) ===== */
+      .numa-bottom-nav { display: none; }
+
+      @media (max-width: 768px) {
+        /* Hide desktop chrome that doesn't fit an app UX */
+        .top-nav .nav-user { display: none; }
+        .top-nav .nav-logo-sub { font-size: 15px; }
+        .top-nav { padding: 10px 14px; box-shadow: 0 1px 0 rgba(0,0,0,0.05); }
+
+        /* Full-width content, generous whitespace */
+        .main-content { padding: 12px 14px 96px 14px !important; }
+        .dashboard-layout { display: block; }
+        .sidebar { display: none !important; }
+
+        /* Cards feel like Material cards */
+        .card {
+          border-radius: 14px;
+          border: 0;
+          box-shadow: 0 1px 2px rgba(45,35,25,0.06), 0 1px 3px rgba(45,35,25,0.04);
+          margin-bottom: 14px;
+        }
+        .card-body { padding: 16px; }
+
+        /* Page headers get a lighter, iOS/Android-style treatment */
+        .page-header h1 { font-size: 24px; letter-spacing: -0.02em; margin: 0 0 4px; }
+        .page-header p { font-size: 14px; color: #6a5d4d; margin: 0; }
+        .page-header { margin-bottom: 16px; }
+
+        /* Bulletin/Schedule stack on phones */
+        #numa-dash-addons { grid-template-columns: 1fr !important; gap: 12px !important; margin: 16px 0 !important; }
+
+        /* Stat grid: two-per-row squares */
+        .stats-grid { display: grid !important; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .stat-card { padding: 14px; border-radius: 14px; }
+        .stat-value { font-size: 22px; }
+        .stat-label { font-size: 12px; }
+
+        /* Modules grid: one column, taller touch targets */
+        .modules-grid { grid-template-columns: 1fr !important; gap: 12px; }
+        .module-card { border-radius: 14px; }
+        .module-card-body { padding: 16px; }
+
+        /* Buttons: bigger tap area */
+        .btn { min-height: 40px; border-radius: 10px; }
+        .btn-sm { min-height: 34px; }
+
+        /* Hide the hamburger — we use bottom nav instead */
+        .mobile-menu-btn { display: none !important; }
+
+        /* Admin overview grid: one column on phones */
+        .admin-overview-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+        .admin-overview-card { border-radius: 14px; padding: 16px; }
+
+        /* Tables become card lists */
+        .admin-table thead { display: none; }
+        .admin-table, .admin-table tbody, .admin-table tr, .admin-table td { display: block; width: 100%; }
+        .admin-table tr {
+          border: 0;
+          box-shadow: 0 1px 2px rgba(45,35,25,0.06);
+          background: #fff;
+          border-radius: 12px;
+          margin-bottom: 10px;
+          padding: 12px;
+        }
+        .admin-table td { border: 0; padding: 4px 0; font-size: 14px; }
+
+        /* Section content readable on small screens */
+        .rich-content, .section-content { font-size: 15px; line-height: 1.6; }
+        .rich-content img, .section-content img { max-width: 100%; height: auto; border-radius: 10px; }
+
+        /* Bottom navigation bar */
+        .numa-bottom-nav {
+          position: fixed; bottom: 0; left: 0; right: 0;
+          display: flex; justify-content: space-around; align-items: stretch;
+          background: rgba(255,255,255,0.98);
+          backdrop-filter: saturate(180%) blur(20px);
+          -webkit-backdrop-filter: saturate(180%) blur(20px);
+          border-top: 1px solid #ece5d6;
+          padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0));
+          z-index: 9990;
+        }
+        .numa-bottom-nav button {
+          flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 2px; background: none; border: 0; color: #8a7d6a; padding: 6px 4px;
+          font-family: inherit; font-size: 10px; letter-spacing: 0.02em; cursor: pointer;
+          transition: color 120ms ease, transform 120ms ease;
+        }
+        .numa-bottom-nav button i { font-size: 20px; }
+        .numa-bottom-nav button.active { color: #A38D78; }
+        .numa-bottom-nav button.active i { transform: scale(1.08); }
+        .numa-bottom-nav button:active { transform: scale(0.94); }
+
+        /* Give room above the bottom bar */
+        body { padding-bottom: 72px; }
+
+        /* Watermark: less dense on small screens so text stays readable */
+        #numa-watermark { opacity: 0.35 !important; }
+
+        /* Form inputs feel native */
+        .form-control {
+          border-radius: 10px; padding: 12px 14px; font-size: 16px;
+          border: 1px solid #e6dfd1; background: #fff;
+        }
+        .form-control:focus { border-color: #A38D78; outline: none; box-shadow: 0 0 0 3px rgba(163,141,120,0.15); }
+
+        /* Sign-out button in header stays reachable */
+        .top-nav .btn-ghost { padding: 6px 10px; }
+      }
+
+      /* Small-phone tighter still */
+      @media (max-width: 380px) {
+        .stats-grid { grid-template-columns: 1fr; }
+        .numa-bottom-nav button span { font-size: 9px; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // ---------- Mount loop ----------
+  function _mount() {
+    _ensureMobileCSS();
+    _ensureStudentDashboardAddons();
+    _ensureBottomNav();
+    _addAdminCards();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _mount);
+  } else {
+    _mount();
+  }
+  setInterval(_mount, 1500);
+})();

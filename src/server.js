@@ -431,6 +431,145 @@ app.patch('/api/admin/users/:id/active', adminRequired, async (req, res) => {
   }
 });
 
+// =========================================================================
+// ===== BULLETIN BOARD ==================================================
+// =========================================================================
+// Anyone signed in can read; admins + teachers can write.
+app.get('/api/bulletin', authRequired, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT b.id, b.title, b.body, b.pinned, b.created_at, b.updated_at,
+              u.full_name AS author_name
+         FROM bulletin_posts b
+         LEFT JOIN users u ON u.id = b.created_by
+        ORDER BY b.pinned DESC, b.created_at DESC
+        LIMIT 100`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[bulletin list]', e);
+    res.status(500).json({ error: 'Failed to load bulletin' });
+  }
+});
+
+app.post('/api/bulletin', staffRequired, async (req, res) => {
+  try {
+    const { title, body, pinned } = req.body || {};
+    if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
+    const r = await pool.query(
+      `INSERT INTO bulletin_posts (title, body, pinned, created_by)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [String(title).slice(0, 200), String(body).slice(0, 10000), !!pinned, req.user.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('[bulletin create]', e);
+    res.status(500).json({ error: 'Create failed' });
+  }
+});
+
+app.put('/api/bulletin/:id', staffRequired, async (req, res) => {
+  try {
+    const { title, body, pinned } = req.body || {};
+    const r = await pool.query(
+      `UPDATE bulletin_posts SET
+         title = COALESCE($1, title),
+         body = COALESCE($2, body),
+         pinned = COALESCE($3, pinned),
+         updated_at = NOW()
+       WHERE id = $4 RETURNING *`,
+      [title || null, body || null, typeof pinned === 'boolean' ? pinned : null, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Post not found' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('[bulletin update]', e);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+app.delete('/api/bulletin/:id', staffRequired, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM bulletin_posts WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[bulletin delete]', e);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+// =========================================================================
+// ===== IN-PERSON SCHEDULE ===============================================
+// =========================================================================
+// Everyone reads; admins + teachers write.
+app.get('/api/schedule', authRequired, async (_req, res) => {
+  try {
+    // Return upcoming + recent (up to 30 days past) so students can see recap.
+    const r = await pool.query(
+      `SELECT id, title, description, location, starts_at, ends_at, required
+         FROM class_schedule
+        WHERE starts_at >= NOW() - INTERVAL '30 days'
+        ORDER BY starts_at ASC
+        LIMIT 200`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[schedule list]', e);
+    res.status(500).json({ error: 'Failed to load schedule' });
+  }
+});
+
+app.post('/api/schedule', staffRequired, async (req, res) => {
+  try {
+    const { title, description, location, starts_at, ends_at, required } = req.body || {};
+    if (!title || !starts_at) return res.status(400).json({ error: 'title and starts_at are required' });
+    const r = await pool.query(
+      `INSERT INTO class_schedule (title, description, location, starts_at, ends_at, required, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [String(title).slice(0, 200), description ? String(description).slice(0, 2000) : null,
+       location ? String(location).slice(0, 200) : null,
+       starts_at, ends_at || null, required !== false, req.user.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('[schedule create]', e);
+    res.status(500).json({ error: 'Create failed' });
+  }
+});
+
+app.put('/api/schedule/:id', staffRequired, async (req, res) => {
+  try {
+    const { title, description, location, starts_at, ends_at, required } = req.body || {};
+    const r = await pool.query(
+      `UPDATE class_schedule SET
+         title = COALESCE($1, title),
+         description = COALESCE($2, description),
+         location = COALESCE($3, location),
+         starts_at = COALESCE($4, starts_at),
+         ends_at = COALESCE($5, ends_at),
+         required = COALESCE($6, required)
+       WHERE id = $7 RETURNING *`,
+      [title || null, description || null, location || null, starts_at || null, ends_at || null,
+       typeof required === 'boolean' ? required : null, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Event not found' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('[schedule update]', e);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+app.delete('/api/schedule/:id', staffRequired, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM class_schedule WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[schedule delete]', e);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
 // Admin: list recent screenshot alerts.
 app.get('/api/admin/screenshot-alerts', adminRequired, async (_req, res) => {
   try {

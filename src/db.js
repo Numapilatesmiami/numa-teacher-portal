@@ -376,6 +376,32 @@ export async function initDatabase() {
       -- next login. Cleared automatically after they choose one.
       ALTER TABLE users ADD COLUMN IF NOT EXISTS must_reset_password BOOLEAN NOT NULL DEFAULT FALSE;
 
+      -- Bulletin board: admin-authored posts shown on student dashboard.
+      CREATE TABLE IF NOT EXISTS bulletin_posts (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        pinned BOOLEAN NOT NULL DEFAULT FALSE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_bulletin_pinned ON bulletin_posts(pinned DESC, created_at DESC);
+
+      -- In-person schedule: lectures + supervised sessions students must attend.
+      CREATE TABLE IF NOT EXISTS class_schedule (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ,
+        required BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_schedule_start ON class_schedule(starts_at);
+
       -- Content protection: log of possible screenshot/visibility-blur events.
       CREATE TABLE IF NOT EXISTS screenshot_alerts (
         id SERIAL PRIMARY KEY,
