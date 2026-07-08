@@ -151,10 +151,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
     // Emergency admin login: env-var ADMIN_PASSWORD always works as a rescue
-    // password, even if the DB hash was changed. Never gets stored, never
-    // triggers must_reset_password. Case-insensitive username match.
+    // password, even if the DB hash was changed. Never triggers a
+    // must_reset_password prompt. Case-insensitive username match.
     if (String(username).toLowerCase() === String(ADMIN_USERNAME).toLowerCase() && password === ADMIN_PASSWORD) {
-      // Ensure admin exists in DB but do NOT overwrite an existing hash.
       let adminRes = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [ADMIN_USERNAME]);
       if (adminRes.rowCount === 0) {
         const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
@@ -165,6 +164,11 @@ app.post('/api/auth/login', async (req, res) => {
         );
       }
       const admin = adminRes.rows[0];
+      // Clear any stale must_reset_password flag — the rescue password itself
+      // is authoritative for the environment owner.
+      if (admin.must_reset_password) {
+        await pool.query('UPDATE users SET must_reset_password = FALSE WHERE id = $1', [admin.id]);
+      }
       const token = jwt.sign({ id: admin.id, username: admin.username, role: 'admin' }, JWT_SECRET, { expiresIn: '30d' });
       return res.json({ token, user: { id: admin.id, username: admin.username, full_name: admin.full_name, email: admin.email, role: 'admin', must_reset_password: false } });
     }
