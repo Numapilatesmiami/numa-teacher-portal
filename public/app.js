@@ -8636,3 +8636,218 @@ async function loadAdminHomeworkInbox() {
   }
   setInterval(injectEditButtons, 800);
 })();
+
+// ===== NUMA_MOBILE_V2: bulletproof mobile student dashboard (2026-07) =====
+(function(){
+  if (window.__NUMA_MOBILE_V2__) return;
+  window.__NUMA_MOBILE_V2__ = true;
+
+  function isMobile() { return window.matchMedia('(max-width: 820px)').matches; }
+  function isStudent() {
+    const u = window.APP && APP.currentUser;
+    return !!(u && !u.isAdmin);
+  }
+  function ensureMobileClass() {
+    const body = document.body;
+    if (!body) return;
+    const mobile = isMobile();
+    const student = isStudent();
+    body.classList.toggle('numa-mobile', mobile);
+    body.classList.toggle('numa-mobile-student', mobile && student);
+    body.classList.toggle('numa-mobile-staff', mobile && !student && !!(window.APP && APP.currentUser));
+  }
+
+  function injectCSS() {
+    if (document.getElementById('numa-mobile-v2-css')) return;
+    const s = document.createElement('style');
+    s.id = 'numa-mobile-v2-css';
+    s.textContent = `
+      /* ===== NUMA MOBILE V2 — force clean student dashboard on phones ===== */
+      body.numa-mobile { -webkit-text-size-adjust: 100%; }
+
+      /* Top nav: clean, compact, real logo */
+      body.numa-mobile .top-nav {
+        padding: 10px 14px !important;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.06) !important;
+        position: sticky !important; top: 0 !important; z-index: 100 !important;
+        background: #fff !important;
+      }
+      body.numa-mobile .top-nav .nav-logo img { width: 96px !important; height: auto !important; }
+      body.numa-mobile .top-nav .nav-logo-text { font-size: 15px !important; }
+      body.numa-mobile .top-nav .nav-logo-sub { display: none !important; }
+      body.numa-mobile .top-nav .nav-user { display: none !important; }
+      body.numa-mobile .mobile-menu-btn { display: none !important; }
+
+      /* Kill sidebar entirely on mobile — real bottom nav takes over */
+      body.numa-mobile .sidebar,
+      body.numa-mobile aside.sidebar,
+      body.numa-mobile #sidebar,
+      body.numa-mobile .mobile-overlay { display: none !important; }
+
+      /* Layout: block, full width */
+      body.numa-mobile .dashboard-layout {
+        display: block !important; flex-direction: unset !important;
+        min-height: 0 !important; height: auto !important;
+      }
+      body.numa-mobile main.main-content,
+      body.numa-mobile .main-content {
+        display: block !important;
+        width: 100% !important; max-width: 100% !important;
+        padding: 16px 14px 96px 14px !important;
+        margin: 0 !important;
+        flex: unset !important;
+      }
+
+      /* Student dashboard: hero card, tight modules list */
+      body.numa-mobile-student .page-header {
+        background: linear-gradient(135deg, #A38D78 0%, #8a7461 100%) !important;
+        color: #fff !important;
+        padding: 20px 18px !important;
+        border-radius: 16px !important;
+        margin: 0 0 16px 0 !important;
+      }
+      body.numa-mobile-student .page-header h1 { color: #fff !important; font-size: 22px !important; margin: 0 0 4px !important; letter-spacing: -0.02em !important; }
+      body.numa-mobile-student .page-header p { color: rgba(255,255,255,0.85) !important; font-size: 13px !important; margin: 0 !important; }
+
+      /* Stats grid: 2x2 compact cards */
+      body.numa-mobile-student .stats-grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 10px !important;
+        margin-bottom: 16px !important;
+      }
+      body.numa-mobile-student .stat-card {
+        padding: 14px 12px !important;
+        border-radius: 14px !important;
+        box-shadow: 0 1px 2px rgba(45,35,25,0.06), 0 1px 3px rgba(45,35,25,0.04) !important;
+        border: 0 !important;
+        background: #fff !important;
+      }
+      body.numa-mobile-student .stat-value { font-size: 20px !important; line-height: 1.15 !important; }
+      body.numa-mobile-student .stat-label { font-size: 11px !important; text-transform: uppercase; letter-spacing: 0.05em; color: #8a7d6a !important; }
+      body.numa-mobile-student .stat-icon { width: 30px !important; height: 30px !important; font-size: 14px !important; margin-bottom: 6px !important; }
+
+      /* Section headings between cards */
+      body.numa-mobile-student main .main-content > h2,
+      body.numa-mobile-student main > h2,
+      body.numa-mobile-student .main-content > h2 {
+        font-size: 16px !important; font-weight: 600 !important; color: #3d3328 !important;
+        margin: 20px 0 10px !important; letter-spacing: -0.01em !important;
+      }
+
+      /* Modules grid: single column, full-width cards */
+      body.numa-mobile-student .modules-grid {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+      }
+      body.numa-mobile-student .module-card {
+        border-radius: 14px !important;
+        box-shadow: 0 1px 2px rgba(45,35,25,0.06), 0 1px 3px rgba(45,35,25,0.04) !important;
+        border: 0 !important;
+        overflow: hidden !important;
+      }
+      body.numa-mobile-student .module-card-top { height: 6px !important; }
+      body.numa-mobile-student .module-card-body { padding: 14px 16px !important; }
+      body.numa-mobile-student .module-card h3 { font-size: 16px !important; margin: 6px 0 4px !important; line-height: 1.3 !important; }
+      body.numa-mobile-student .module-card p { font-size: 13px !important; color: #6a5d4d !important; line-height: 1.4 !important; margin: 0 0 10px !important; }
+      body.numa-mobile-student .module-card-num { font-size: 11px !important; color: #A38D78 !important; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600 !important; }
+
+      /* Dash addons (bulletin + schedule) — stacked cards */
+      body.numa-mobile #numa-dash-addons {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+        margin: 0 0 16px 0 !important;
+      }
+      body.numa-mobile #numa-dash-addons .card {
+        border-radius: 14px !important;
+        box-shadow: 0 1px 2px rgba(45,35,25,0.06), 0 1px 3px rgba(45,35,25,0.04) !important;
+        border: 0 !important;
+      }
+      body.numa-mobile #numa-dash-addons .card-body { padding: 14px 16px !important; }
+      body.numa-mobile #numa-dash-addons h2 { font-size: 15px !important; }
+
+      /* Recent activity card */
+      body.numa-mobile-student .activity-feed { font-size: 13px !important; }
+
+      /* Bottom nav */
+      .numa-bottom-nav { display: none; }
+      body.numa-mobile .numa-bottom-nav {
+        display: flex !important;
+        position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important;
+        justify-content: space-around; align-items: stretch;
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: saturate(180%) blur(20px);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        border-top: 1px solid #ece5d6;
+        padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0)) !important;
+        z-index: 9990 !important;
+      }
+      body.numa-mobile .numa-bottom-nav button {
+        flex: 1; display: flex !important; flex-direction: column; align-items: center; justify-content: center;
+        gap: 2px; background: none; border: 0; color: #8a7d6a; padding: 6px 4px;
+        font-size: 11px; font-weight: 500;
+      }
+      body.numa-mobile .numa-bottom-nav button.active { color: #A38D78; }
+      body.numa-mobile .numa-bottom-nav button i { font-size: 18px; }
+
+      /* Cards default styling on mobile */
+      body.numa-mobile .card {
+        border-radius: 14px !important;
+        border: 0 !important;
+        box-shadow: 0 1px 2px rgba(45,35,25,0.06), 0 1px 3px rgba(45,35,25,0.04) !important;
+        margin-bottom: 14px !important;
+      }
+      body.numa-mobile .card-body { padding: 16px !important; }
+
+      /* Buttons: bigger tap area */
+      body.numa-mobile .btn { min-height: 42px !important; border-radius: 10px !important; }
+      body.numa-mobile .btn-sm { min-height: 34px !important; }
+
+      /* Admin tables become cards on mobile too */
+      body.numa-mobile .admin-table thead { display: none !important; }
+      body.numa-mobile .admin-table,
+      body.numa-mobile .admin-table tbody,
+      body.numa-mobile .admin-table tr,
+      body.numa-mobile .admin-table td { display: block !important; width: 100% !important; }
+      body.numa-mobile .admin-table tr {
+        border: 0 !important; box-shadow: 0 1px 2px rgba(45,35,25,0.06) !important;
+        background: #fff !important; border-radius: 12px !important;
+        margin-bottom: 10px !important; padding: 12px !important;
+      }
+      body.numa-mobile .admin-table td { border: 0 !important; padding: 4px 0 !important; font-size: 14px !important; }
+
+      /* Forms full width on mobile */
+      body.numa-mobile input, body.numa-mobile select, body.numa-mobile textarea {
+        font-size: 16px !important;
+      }
+
+      /* Module content pages */
+      body.numa-mobile .module-content { padding: 18px 14px !important; }
+      body.numa-mobile .quiz-section { padding: 18px 14px !important; }
+
+      /* Section content readable on small screens */
+      body.numa-mobile .rich-content, body.numa-mobile .section-content {
+        font-size: 15px !important; line-height: 1.6 !important;
+      }
+      body.numa-mobile .rich-content img,
+      body.numa-mobile .section-content img,
+      body.numa-mobile img,
+      body.numa-mobile video,
+      body.numa-mobile iframe {
+        max-width: 100% !important; height: auto !important; border-radius: 10px !important;
+      }
+    `;
+    document.head.appendChild(s);
+  }
+
+  function tick() {
+    injectCSS();
+    ensureMobileClass();
+  }
+  tick();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick);
+  window.addEventListener('resize', tick);
+  setInterval(tick, 1000);
+})();
