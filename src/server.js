@@ -930,6 +930,37 @@ app.post('/api/admin/enrollment-codes', adminRequired, async (req, res) => {
   }
 });
 
+app.patch('/api/admin/enrollment-codes/:code', adminRequired, async (req, res) => {
+  const oldCode = req.params.code;
+  const { code: newCode, label, is_active } = req.body || {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT * FROM enrollment_codes WHERE code = $1', [oldCode]);
+    if (cur.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    const nextCode = (typeof newCode === 'string' && newCode.trim()) ? newCode.toUpperCase().trim() : oldCode;
+    const nextLabel = (typeof label === 'string') ? label : cur.rows[0].label;
+    const nextActive = (typeof is_active === 'boolean') ? is_active : cur.rows[0].is_active;
+    if (nextCode !== oldCode) {
+      const dupe = await client.query('SELECT 1 FROM enrollment_codes WHERE code = $1', [nextCode]);
+      if (dupe.rowCount > 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Code already exists' }); }
+      await client.query('UPDATE enrollment_codes SET code = $1, label = $2, is_active = $3 WHERE code = $4', [nextCode, nextLabel, nextActive, oldCode]);
+      await client.query('UPDATE users SET enrollment_code = $1 WHERE enrollment_code = $2', [nextCode, oldCode]);
+    } else {
+      await client.query('UPDATE enrollment_codes SET label = $1, is_active = $2 WHERE code = $3', [nextLabel, nextActive, oldCode]);
+    }
+    await client.query('COMMIT');
+    const updated = await pool.query('SELECT * FROM enrollment_codes WHERE code = $1', [nextCode]);
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('enrollment-code patch failed', err);
+    res.status(500).json({ error: 'Failed' });
+  } finally {
+    client.release();
+  }
+});
+
 app.delete('/api/admin/enrollment-codes/:code', adminRequired, async (req, res) => {
   await pool.query('DELETE FROM enrollment_codes WHERE code = $1', [req.params.code]);
   res.json({ ok: true });

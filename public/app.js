@@ -8305,3 +8305,135 @@ async function loadAdminHomeworkInbox() {
   }
   setInterval(_mount, 1500);
 })();
+
+// ===== NUMA_ENROLLMENT_ADMIN: live editable enrollment codes (admin) =====
+(function(){
+  if (window.__NUMA_ENROLLMENT_ADMIN__) return;
+  window.__NUMA_ENROLLMENT_ADMIN__ = true;
+
+  function api(path, opts) {
+    if (typeof apiCall === 'function') return apiCall(path, opts);
+    const token = localStorage.getItem('numa_token');
+    return fetch((window.API_BASE || '') + path, Object.assign({
+      headers: Object.assign({'Content-Type':'application/json'}, token ? {'Authorization':'Bearer '+token} : {})
+    }, opts || {})).then(r => r.json()).catch(() => null);
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  window.renderEnrollmentCodesPage = function renderEnrollmentCodesPage() {
+    setTimeout(loadEnrollmentCodes, 0);
+    return `
+      <div class="page-header fade-in">
+        <h1><i class="fa-solid fa-key"></i> Enrollment Codes</h1>
+        <p>Create, rename, disable, or delete the codes students need to register.</p>
+      </div>
+      <div style="margin-bottom:20px;">
+        <button class="btn btn-secondary" onclick="navigate('admin')"><i class="fa-solid fa-arrow-left"></i> Back to Students</button>
+      </div>
+
+      <div class="card slide-up"><div class="card-body">
+        <h3 style="margin-bottom:12px;">Add a New Code</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div style="flex:1;min-width:180px;">
+            <label style="display:block;font-size:0.85rem;color:#6a5d4d;margin-bottom:4px;">Code</label>
+            <input id="numa-ec-new-code" type="text" placeholder="e.g. NUMA2027" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;text-transform:uppercase;font-family:monospace;letter-spacing:2px;">
+          </div>
+          <div style="flex:2;min-width:220px;">
+            <label style="display:block;font-size:0.85rem;color:#6a5d4d;margin-bottom:4px;">Label (optional)</label>
+            <input id="numa-ec-new-label" type="text" placeholder="e.g. Spring 2027 cohort" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;">
+          </div>
+          <button class="btn btn-primary" onclick="numaEnrollmentCreate()"><i class="fa-solid fa-plus"></i> Add Code</button>
+        </div>
+      </div></div>
+
+      <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+        <h3 style="margin-bottom:12px;">All Enrollment Codes</h3>
+        <div id="numa-ec-list"><p class="text-muted">Loading...</p></div>
+      </div></div>
+
+      <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+        <h3 style="margin-bottom:8px;">Tips</h3>
+        <ul style="line-height:1.8;color:#6a5d4d;padding-left:20px;">
+          <li>Disable a code to stop new sign-ups without touching existing students.</li>
+          <li>Renaming a code updates every student already registered with it.</li>
+          <li>Deleting a code is permanent, but students already registered keep their access.</li>
+        </ul>
+      </div></div>
+    `;
+  };
+
+  async function loadEnrollmentCodes() {
+    const wrap = document.getElementById('numa-ec-list');
+    if (!wrap) return;
+    const rows = await api('/api/admin/enrollment-codes');
+    if (!rows || rows.error || !Array.isArray(rows)) {
+      wrap.innerHTML = '<p class="text-muted">Could not load codes.</p>';
+      return;
+    }
+    if (!rows.length) {
+      wrap.innerHTML = '<p class="text-muted">No enrollment codes yet. Add one above.</p>';
+      return;
+    }
+    let html = '<table class="admin-table"><thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Students</th><th style="text-align:right;">Actions</th></tr></thead><tbody>';
+    for (const r of rows) {
+      const active = r.is_active !== false;
+      html += `<tr data-code="${esc(r.code)}">
+        <td><strong style="font-family:monospace;font-size:1.05rem;letter-spacing:2px;color:#A38D78;">${esc(r.code)}</strong></td>
+        <td>${esc(r.label || '')}</td>
+        <td>${active
+          ? '<span class="badge badge-complete" style="background:#e8f5e9;color:#2e7d32;">Active</span>'
+          : '<span class="badge" style="background:#f5efe4;color:#6a5d4d;">Disabled</span>'}</td>
+        <td>${Number(r.student_count || 0)}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn btn-sm btn-secondary" onclick="numaEnrollmentEdit('${esc(r.code)}')"><i class="fa-solid fa-pen"></i> Edit</button>
+          <button class="btn btn-sm" style="background:${active ? '#fff3e0' : '#e8f5e9'};color:${active ? '#e65100' : '#2e7d32'};" onclick="numaEnrollmentToggle('${esc(r.code)}', ${active ? 'false' : 'true'})">
+            <i class="fa-solid fa-${active ? 'pause' : 'play'}"></i> ${active ? 'Disable' : 'Enable'}
+          </button>
+          <button class="btn btn-sm" style="background:#ffebee;color:#c62828;" onclick="numaEnrollmentDelete('${esc(r.code)}', ${Number(r.student_count || 0)})"><i class="fa-solid fa-trash"></i> Delete</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  window.numaEnrollmentCreate = async function() {
+    const codeEl = document.getElementById('numa-ec-new-code');
+    const labelEl = document.getElementById('numa-ec-new-label');
+    const code = (codeEl?.value || '').toUpperCase().trim();
+    const label = (labelEl?.value || '').trim();
+    if (!code) { alert('Enter a code first.'); return; }
+    const res = await api('/api/admin/enrollment-codes', { method: 'POST', body: JSON.stringify({ code, label }) });
+    if (!res || res.error) { alert(res?.error || 'Could not create code.'); return; }
+    codeEl.value = ''; labelEl.value = '';
+    loadEnrollmentCodes();
+  };
+
+  window.numaEnrollmentEdit = async function(oldCode) {
+    const newCode = prompt('Rename code (letters/numbers). Leave the same to only edit the label:', oldCode);
+    if (newCode === null) return;
+    const newLabel = prompt('Label for this code (optional):', '');
+    if (newLabel === null) return;
+    const body = { code: newCode.toUpperCase().trim() };
+    if (newLabel.trim() !== '') body.label = newLabel.trim();
+    const res = await api('/api/admin/enrollment-codes/' + encodeURIComponent(oldCode), { method: 'PATCH', body: JSON.stringify(body) });
+    if (!res || res.error) { alert(res?.error || 'Could not update code.'); return; }
+    loadEnrollmentCodes();
+  };
+
+  window.numaEnrollmentToggle = async function(code, makeActive) {
+    const res = await api('/api/admin/enrollment-codes/' + encodeURIComponent(code), { method: 'PATCH', body: JSON.stringify({ is_active: !!makeActive }) });
+    if (!res || res.error) { alert(res?.error || 'Could not update code.'); return; }
+    loadEnrollmentCodes();
+  };
+
+  window.numaEnrollmentDelete = async function(code, studentCount) {
+    const warn = studentCount > 0
+      ? `Delete code "${code}"?\n\n${studentCount} student(s) registered with this code will keep their accounts, but the code itself will be gone.`
+      : `Delete code "${code}"? This cannot be undone.`;
+    if (!confirm(warn)) return;
+    const res = await api('/api/admin/enrollment-codes/' + encodeURIComponent(code), { method: 'DELETE' });
+    if (!res || res.error) { alert(res?.error || 'Could not delete code.'); return; }
+    loadEnrollmentCodes();
+  };
+})();
