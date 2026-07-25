@@ -9059,3 +9059,291 @@ async function loadAdminHomeworkInbox() {
     body.innerHTML = html;
   };
 })();
+
+// ===== NUMA_EXERCISE_IMAGES =====
+// Adds an image slot (with upload box for admins) next to every exercise
+// in the Mat and Reformer sections.
+(function(){
+  if (window.__NUMA_EX_IMG__) return;
+  window.__NUMA_EX_IMG__ = true;
+
+  // Sections that should get image slots. Keys are section IDs.
+  // 'card' = look for .exercise-card elements
+  // 'tr'   = look for <tr> rows where first <td> is the exercise name
+  // 'auto' = auto-detect (try cards first, then rows)
+  var TARGETS = {
+    '3-1':  { mode: 'card',  label: 'Mat Exercise' },   // Mat Part 1
+    '3-2':  { mode: 'card',  label: 'Mat Exercise' },   // Mat Part 2
+    '4-1':  { mode: 'tr',    label: 'Reformer' },       // Reformer Anatomy
+    '4-2':  { mode: 'tr',    label: 'Reformer' },       // Supine
+    '4-3':  { mode: 'tr',    label: 'Reformer' },       // Long Box / Short Box
+    '4-4':  { mode: 'tr',    label: 'Reformer' },       // Kneeling & Standing
+    '4-5':  { mode: 'card',  label: 'Reformer' },       // Class Flows (h4)
+    '4-6':  { mode: 'card',  label: 'Reformer' },       // Advanced/Additional
+    '4-7':  { mode: 'card',  label: 'Reformer' },       // Feet in Straps
+    '4-8':  { mode: 'auto',  label: 'Jumpboard' }       // Jumpboard (mixed)
+  };
+
+  var _cache = {};   // sectionId -> { slug: {url,title} }
+  var _apiBase = null;
+  function apiBase() {
+    if (_apiBase !== null) return _apiBase;
+    _apiBase = (typeof API_BASE !== 'undefined' && API_BASE !== null && API_BASE !== undefined)
+      ? API_BASE : (window.NUMA_API_BASE || '');
+    return _apiBase;
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function slugify(s) {
+    return String(s || '').toLowerCase()
+      .replace(/&[a-z]+;/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 100) || 'exercise';
+  }
+  function isAdmin() {
+    try { return !!(window.APP && APP.currentUser && APP.currentUser.isAdmin); }
+    catch (_) { return false; }
+  }
+
+  async function loadImages(sectionId) {
+    if (_cache[sectionId]) return _cache[sectionId];
+    try {
+      const token = localStorage.getItem('numa_token');
+      const res = await fetch(apiBase() + '/api/exercise-images/' + encodeURIComponent(sectionId), {
+        headers: token ? { Authorization: 'Bearer ' + token } : {}
+      });
+      if (!res.ok) throw new Error('http ' + res.status);
+      const data = await res.json();
+      _cache[sectionId] = data || {};
+      return _cache[sectionId];
+    } catch (_) {
+      _cache[sectionId] = {};
+      return _cache[sectionId];
+    }
+  }
+
+  async function saveImage(sectionId, slug, title, url) {
+    const token = localStorage.getItem('numa_token');
+    const res = await fetch(apiBase() + '/api/admin/exercise-images', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || '') },
+      body: JSON.stringify({ section_id: sectionId, exercise_slug: slug, exercise_title: title, image_url: url })
+    });
+    if (!res.ok) throw new Error('save failed');
+    _cache[sectionId] = _cache[sectionId] || {};
+    _cache[sectionId][slug] = { url: url, title: title };
+    return await res.json();
+  }
+
+  async function deleteImage(sectionId, slug) {
+    const token = localStorage.getItem('numa_token');
+    const res = await fetch(apiBase() + '/api/admin/exercise-images/' + encodeURIComponent(sectionId) + '/' + encodeURIComponent(slug), {
+      method: 'DELETE',
+      headers: token ? { Authorization: 'Bearer ' + token } : {}
+    });
+    if (_cache[sectionId]) delete _cache[sectionId][slug];
+    return res.ok;
+  }
+
+  function imageSlotHTML(sectionId, slug, title, existing) {
+    const url = existing && existing.url;
+    const admin = isAdmin();
+    return (
+      '<div class="numa-ex-img" data-section="' + esc(sectionId) + '" data-slug="' + esc(slug) + '" data-title="' + esc(title) + '" ' +
+      'style="margin:14px 0 6px;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;background:#fbf7f2;">' +
+        (url
+          ? '<div style="position:relative;">' +
+              '<img src="' + esc(url) + '" alt="' + esc(title) + '" style="display:block;width:100%;height:auto;max-height:340px;object-fit:cover;">' +
+              (admin
+                ? '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
+                    '<button type="button" class="numa-ex-img-replace" style="background:rgba(255,255,255,0.9);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
+                    '<button type="button" class="numa-ex-img-delete" style="background:rgba(255,255,255,0.9);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
+                  '</div>'
+                : ''
+              ) +
+            '</div>'
+          : (admin
+              ? '<label class="numa-ex-img-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;cursor:pointer;color:#7a6a5f;text-align:center;">' +
+                  '<i class="fa-solid fa-cloud-arrow-up" style="font-size:28px;color:#A38D78;margin-bottom:8px;"></i>' +
+                  '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
+                  '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">for “' + esc(title) + '”</div>' +
+                  '<input type="file" accept="image/*" style="display:none;">' +
+                '</label>'
+              : '<div style="padding:16px;text-align:center;color:#a89680;font-size:13px;"><i class="fa-regular fa-image"></i> Photo coming soon</div>'
+            )
+        ) +
+      '</div>'
+    );
+  }
+
+  function wireSlot(slot) {
+    if (slot.__wired) return;
+    slot.__wired = true;
+    const sectionId = slot.getAttribute('data-section');
+    const slug = slot.getAttribute('data-slug');
+    const title = slot.getAttribute('data-title');
+
+    // Upload input change
+    const input = slot.querySelector('input[type=file]');
+    if (input) {
+      input.addEventListener('change', async (e) => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const label = slot.querySelector('label');
+        if (label) label.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:22px;color:#A38D78;"></i><div style="margin-top:8px;font-size:12px;color:#7a6a5f;">Uploading ' + esc(file.name) + '...</div>';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const token = localStorage.getItem('numa_token');
+          const res = await fetch(apiBase() + '/api/admin/upload', {
+            method: 'POST',
+            headers: token ? { Authorization: 'Bearer ' + token } : {},
+            body: fd
+          });
+          const data = await res.json();
+          if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
+          let url = data.absoluteUrl || (apiBase() + data.url);
+          if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
+          await saveImage(sectionId, slug, title, url);
+          slot.outerHTML = imageSlotHTML(sectionId, slug, title, { url, title });
+          const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
+          if (fresh) wireSlot(fresh);
+        } catch (err) {
+          alert('Upload failed: ' + (err.message || 'unknown error'));
+          if (label) label.innerHTML = '<i class="fa-solid fa-cloud-arrow-up" style="font-size:28px;color:#A38D78;margin-bottom:8px;"></i><div style="font-weight:600;font-size:13px;color:#3b312c;">Try again</div>';
+        }
+      });
+    }
+
+    // Replace button
+    const replaceBtn = slot.querySelector('.numa-ex-img-replace');
+    if (replaceBtn) {
+      replaceBtn.addEventListener('click', async () => {
+        await deleteImage(sectionId, slug);
+        slot.outerHTML = imageSlotHTML(sectionId, slug, title, null);
+        const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
+        if (fresh) {
+          wireSlot(fresh);
+          const inp = fresh.querySelector('input[type=file]');
+          if (inp) inp.click();
+        }
+      });
+    }
+
+    // Delete button
+    const delBtn = slot.querySelector('.numa-ex-img-delete');
+    if (delBtn) {
+      delBtn.addEventListener('click', async () => {
+        if (!confirm('Delete this exercise photo?')) return;
+        await deleteImage(sectionId, slug);
+        slot.outerHTML = imageSlotHTML(sectionId, slug, title, null);
+        const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
+        if (fresh) wireSlot(fresh);
+      });
+    }
+  }
+
+  function textOf(el) {
+    return (el.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  async function decorate(container, sectionId, config) {
+    const images = await loadImages(sectionId);
+    let count = 0;
+
+    // Card mode: look for .exercise-card
+    if (config.mode === 'card' || config.mode === 'auto') {
+      const cards = container.querySelectorAll('.exercise-card');
+      cards.forEach(card => {
+        if (card.__numaImgInjected) return;
+        const heading = card.querySelector('h3, h4, h5');
+        const title = heading ? textOf(heading) : ('Exercise ' + (++count));
+        const slug = slugify(title);
+        card.__numaImgInjected = true;
+        const wrap = document.createElement('div');
+        wrap.innerHTML = imageSlotHTML(sectionId, slug, title, images[slug]);
+        const slot = wrap.firstElementChild;
+        // Insert right after the heading if there is one; otherwise prepend
+        if (heading && heading.parentNode === card) {
+          heading.insertAdjacentElement('afterend', slot);
+        } else {
+          card.insertBefore(slot, card.firstChild);
+        }
+        wireSlot(slot);
+      });
+      if (cards.length > 0 && config.mode === 'auto') return; // don't also do rows
+    }
+
+    // TR mode: look for exercise rows in tables. Skip the header row.
+    if (config.mode === 'tr' || config.mode === 'auto') {
+      const tables = container.querySelectorAll('table');
+      tables.forEach(tbl => {
+        // Determine if this table looks like an exercise table.
+        // We look at the first data row: if the first cell is short and
+        // looks like an exercise name (not a heading like "Beginner"), we treat rows as exercises.
+        const rows = tbl.querySelectorAll('tr');
+        rows.forEach((row, idx) => {
+          if (row.__numaImgInjected) return;
+          if (row.querySelector('th')) return; // header
+          const firstTd = row.querySelector('td');
+          if (!firstTd) return;
+          const title = textOf(firstTd);
+          if (!title || title.length < 2 || title.length > 80) return;
+          // Skip rows that clearly aren't exercises (numbers/short words alone)
+          if (/^(yes|no|n\/a|-|beginner|intermediate|advanced)$/i.test(title)) return;
+          const slug = slugify(title);
+          row.__numaImgInjected = true;
+          // Insert an image slot as its own row spanning all columns, right after this one
+          const cols = row.children.length;
+          const imgTr = document.createElement('tr');
+          imgTr.className = 'numa-ex-img-row';
+          const td = document.createElement('td');
+          td.colSpan = cols;
+          td.style.cssText = 'padding:0;background:#fbf7f2;';
+          td.innerHTML = imageSlotHTML(sectionId, slug, title, images[slug]);
+          imgTr.appendChild(td);
+          row.parentNode.insertBefore(imgTr, row.nextSibling);
+          const slot = td.firstElementChild;
+          if (slot) wireSlot(slot);
+        });
+      });
+    }
+  }
+
+  // Hook into renderModulePage — after it renders, walk the DOM and decorate.
+  function wireHook() {
+    if (typeof renderModulePage !== 'function') return false;
+    if (window.__NUMA_EX_IMG_HOOKED__) return true;
+    window.__NUMA_EX_IMG_HOOKED__ = true;
+    const _orig = renderModulePage;
+    window.renderModulePage = function(moduleId, sectionId) {
+      const html = _orig.apply(this, arguments);
+      // Defer until DOM is painted
+      setTimeout(() => {
+        const container = document.querySelector('.module-content');
+        if (!container) return;
+        // The currentSection ID = <moduleId>-<idx>; look at every target
+        for (const [sid, cfg] of Object.entries(TARGETS)) {
+          if (!sid.startsWith(String(moduleId) + '-')) continue;
+          // Only decorate if this section is the one currently rendered.
+          // We use the sectionId param when present, else default to first section.
+          // Match by whether container HTML looks like it belongs to this section — cheap heuristic:
+          // just try all — decorate() is idempotent per-card.
+          if (sectionId ? sid === sectionId : true) {
+            decorate(container, sid, cfg).catch(() => {});
+          }
+        }
+      }, 30);
+      return html;
+    };
+    return true;
+  }
+
+  if (!wireHook()) {
+    // Retry until app.js has defined renderModulePage
+    const iv = setInterval(() => { if (wireHook()) clearInterval(iv); }, 500);
+  }
+
+  // Expose for debugging
+  window.numaExerciseImages = { loadImages, saveImage, deleteImage, TARGETS };
+})();

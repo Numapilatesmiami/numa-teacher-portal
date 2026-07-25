@@ -413,6 +413,20 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_screenshot_alerts_user ON screenshot_alerts(user_id);
       CREATE INDEX IF NOT EXISTS idx_screenshot_alerts_created ON screenshot_alerts(created_at DESC);
+
+      -- Photo per named exercise inside a section (mat + reformer movements).
+      CREATE TABLE IF NOT EXISTS exercise_images (
+        id SERIAL PRIMARY KEY,
+        section_id TEXT NOT NULL,
+        exercise_slug TEXT NOT NULL,
+        exercise_title TEXT,
+        image_url TEXT NOT NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(section_id, exercise_slug)
+      );
+      CREATE INDEX IF NOT EXISTS idx_exercise_images_section ON exercise_images(section_id);
     `);
 
     // Seed default pathway rows for each track (all modules required, hours = global).

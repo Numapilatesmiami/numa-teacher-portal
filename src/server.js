@@ -561,6 +561,68 @@ app.get('/api/schedule', authRequired, async (_req, res) => {
   }
 });
 
+// ===== Exercise images (per movement inside a section) =====
+app.get('/api/exercise-images/:sectionId', authRequired, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'SELECT exercise_slug, exercise_title, image_url, updated_at FROM exercise_images WHERE section_id = $1',
+      [String(req.params.sectionId)]
+    );
+    const map = {};
+    for (const row of r.rows) map[row.exercise_slug] = { url: row.image_url, title: row.exercise_title, updated_at: row.updated_at };
+    res.json(map);
+  } catch (err) {
+    console.error('exercise-images GET', err);
+    res.status(500).json({ error: 'Failed to load exercise images' });
+  }
+});
+
+app.get('/api/exercise-images', authRequired, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      'SELECT section_id, exercise_slug, exercise_title, image_url, updated_at FROM exercise_images ORDER BY section_id, exercise_slug'
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('exercise-images GET all', err);
+    res.status(500).json({ error: 'Failed to load exercise images' });
+  }
+});
+
+app.put('/api/admin/exercise-images', adminRequired, async (req, res) => {
+  try {
+    const { section_id, exercise_slug, exercise_title, image_url } = req.body || {};
+    if (!section_id || !exercise_slug || !image_url) {
+      return res.status(400).json({ error: 'section_id, exercise_slug and image_url are required' });
+    }
+    const r = await pool.query(
+      `INSERT INTO exercise_images (section_id, exercise_slug, exercise_title, image_url, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (section_id, exercise_slug)
+       DO UPDATE SET image_url = EXCLUDED.image_url,
+                     exercise_title = COALESCE(EXCLUDED.exercise_title, exercise_images.exercise_title),
+                     updated_at = NOW()
+       RETURNING *`,
+      [String(section_id), String(exercise_slug), exercise_title ? String(exercise_title).slice(0, 300) : null, String(image_url), req.user.id]
+    );
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('exercise-images PUT', err);
+    res.status(500).json({ error: 'Failed to save exercise image' });
+  }
+});
+
+app.delete('/api/admin/exercise-images/:sectionId/:slug', adminRequired, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM exercise_images WHERE section_id = $1 AND exercise_slug = $2',
+      [String(req.params.sectionId), String(req.params.slug)]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('exercise-images DELETE', err);
+    res.status(500).json({ error: 'Failed to delete exercise image' });
+  }
+});
+
 app.post('/api/schedule', staffRequired, async (req, res) => {
   try {
     const { title, description, location, starts_at, ends_at, required } = req.body || {};
