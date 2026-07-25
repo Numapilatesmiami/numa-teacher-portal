@@ -1333,6 +1333,11 @@ function renderAdminContent() {
       <h3>Enrollment Codes</h3>
       <p>Create codes for new students to sign up</p>
     </div>
+    <div class="admin-overview-card" onclick="navigate('admin',{view:'exerciseImages'})">
+      <div class="admin-overview-icon"><i class="fa-solid fa-images"></i></div>
+      <h3>Exercise Photos</h3>
+      <p>Upload a reference photo for every Mat and Reformer exercise</p>
+    </div>
     <div class="admin-overview-card" onclick="navigate('admin',{view:'questions'})">
       <div class="admin-overview-icon"><i class="fa-solid fa-inbox"></i></div>
       <h3>Student Questions</h3>
@@ -2068,6 +2073,7 @@ window.renderAdminContent = function() {
   if (p.view === 'editSection') return renderSectionEditor(p.moduleId, p.sectionId);
   if (p.view === 'newModule') return renderModuleEditor(null);
   if (p.view === 'newSection') return renderSectionEditor(p.moduleId, null);
+  if (p.view === 'exerciseImages') return renderExerciseImagesAdmin();
   return _origRenderAdminContent();
 };
 renderAdminContent = window.renderAdminContent;
@@ -9346,4 +9352,303 @@ async function loadAdminHomeworkInbox() {
 
   // Expose for debugging
   window.numaExerciseImages = { loadImages, saveImage, deleteImage, TARGETS };
+})();
+
+// ===== NUMA_EXERCISE_IMAGES_ADMIN =====
+// Dedicated admin page: one upload box per exercise across all Mat + Reformer sections.
+(function(){
+  if (window.__NUMA_EX_IMG_ADMIN__) return;
+  window.__NUMA_EX_IMG_ADMIN__ = true;
+
+  var TARGETS = {
+    '3-1': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 1)' },
+    '3-2': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 2)' },
+    '3-4': { mode: 'card', module: 'Mat',      section: 'Props: Magic Circle' },
+    '3-5': { mode: 'card', module: 'Mat',      section: 'Props: Overball / Squishy Ball' },
+    '3-6': { mode: 'card', module: 'Mat',      section: 'Props: Stability Ball & Bands' },
+    '4-1': { mode: 'tr',   module: 'Reformer', section: 'Reformer Anatomy & Safety' },
+    '4-2': { mode: 'tr',   module: 'Reformer', section: 'Supine Exercises' },
+    '4-3': { mode: 'tr',   module: 'Reformer', section: 'Long Box & Short Box' },
+    '4-4': { mode: 'tr',   module: 'Reformer', section: 'Kneeling & Standing' },
+    '4-6': { mode: 'card', module: 'Reformer', section: 'Advanced & Additional' },
+    '4-7': { mode: 'card', module: 'Reformer', section: 'Feet in Straps' },
+    '4-8': { mode: 'auto', module: 'Reformer', section: 'Jumpboard' }
+  };
+
+  function apiBase() {
+    return (typeof API_BASE !== 'undefined' && API_BASE !== null && API_BASE !== undefined)
+      ? API_BASE : (window.NUMA_API_BASE || '');
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function slugify(s) {
+    return String(s || '').toLowerCase().replace(/&[a-z]+;/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100) || 'exercise';
+  }
+  function textOf(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
+
+  async function getToken() { return localStorage.getItem('numa_token'); }
+
+  async function fetchSection(sectionId) {
+    const token = await getToken();
+    const modId = sectionId.split('-')[0];
+    const r = await fetch(apiBase() + '/api/modules/' + modId, {
+      headers: token ? { Authorization: 'Bearer ' + token } : {}
+    });
+    if (!r.ok) return null;
+    const m = await r.json();
+    return (m.sections || []).find(s => s.id === sectionId) || null;
+  }
+
+  async function fetchImages(sectionId) {
+    const token = await getToken();
+    try {
+      const r = await fetch(apiBase() + '/api/exercise-images/' + encodeURIComponent(sectionId), {
+        headers: token ? { Authorization: 'Bearer ' + token } : {}
+      });
+      if (!r.ok) return {};
+      return await r.json();
+    } catch (_) { return {}; }
+  }
+
+  // Extract exercise list from a section's HTML content
+  function extractExercises(sectionId, cfg, html) {
+    const container = document.createElement('div');
+    container.innerHTML = html || '';
+    const list = [];
+    const seen = new Set();
+
+    function add(title) {
+      title = (title || '').trim();
+      if (!title || title.length < 2 || title.length > 100) return;
+      if (/^(yes|no|n\/a|-|beginner|intermediate|advanced|exercise|setup|purpose)$/i.test(title)) return;
+      const slug = slugify(title);
+      if (seen.has(slug)) return;
+      seen.add(slug);
+      list.push({ slug, title });
+    }
+
+    if (cfg.mode === 'card' || cfg.mode === 'auto') {
+      const cards = container.querySelectorAll('.exercise-card');
+      cards.forEach(card => {
+        const h = card.querySelector('h3, h4, h5');
+        if (h) add(textOf(h));
+      });
+    }
+    if (cfg.mode === 'tr' || cfg.mode === 'auto') {
+      const tables = container.querySelectorAll('table');
+      tables.forEach(tbl => {
+        const rows = tbl.querySelectorAll('tr');
+        rows.forEach(row => {
+          if (row.querySelector('th')) return;
+          const firstTd = row.querySelector('td');
+          if (!firstTd) return;
+          add(textOf(firstTd));
+        });
+      });
+    }
+    return list;
+  }
+
+  window.renderExerciseImagesAdmin = function() {
+    // Async-fill; return a shell immediately
+    setTimeout(loadAndRender, 30);
+    return (
+      '<div class="page-header fade-in" style="margin-bottom:20px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
+          '<div>' +
+            '<h1><i class="fa-solid fa-images"></i> Exercise Photos</h1>' +
+            '<p>Upload a reference photo for every Mat and Reformer exercise. Photos appear inline for students in the module reader.</p>' +
+          '</div>' +
+          '<button class="btn btn-secondary" onclick="navigate(\'admin\')"><i class="fa-solid fa-arrow-left"></i> Back to Admin</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="numa-ex-admin-body" style="min-height:200px;">' +
+        '<div style="text-align:center;padding:40px;color:#7a6a5f;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div style="margin-top:10px;">Loading exercises...</div></div>' +
+      '</div>'
+    );
+  };
+
+  async function loadAndRender() {
+    const body = document.getElementById('numa-ex-admin-body');
+    if (!body) return;
+    // Group by module
+    const groups = { Mat: [], Reformer: [] };
+    const entries = Object.entries(TARGETS);
+    // Load in parallel
+    const results = await Promise.all(entries.map(async ([sid, cfg]) => {
+      const section = await fetchSection(sid);
+      if (!section) return null;
+      const images = await fetchImages(sid);
+      const exercises = extractExercises(sid, cfg, section.content).map(e => ({
+        ...e,
+        url: images[e.slug] && images[e.slug].url || null
+      }));
+      return { sid, cfg, section, exercises };
+    }));
+
+    for (const r of results) {
+      if (!r) continue;
+      groups[r.cfg.module].push(r);
+    }
+
+    // Totals
+    let totalEx = 0, totalWithPhoto = 0;
+    for (const g of Object.values(groups)) for (const s of g) { totalEx += s.exercises.length; totalWithPhoto += s.exercises.filter(e => e.url).length; }
+
+    let html = (
+      '<div style="background:#fff;border:1px solid #eadfd6;border-radius:18px;padding:18px 22px;margin-bottom:22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
+        '<div>' +
+          '<div style="font-size:14px;color:#7a6a5f;">Progress</div>' +
+          '<div style="font-size:20px;font-weight:700;color:#3b312c;">' + totalWithPhoto + ' / ' + totalEx + ' exercises have a photo</div>' +
+        '</div>' +
+        '<div style="flex:1;max-width:400px;height:14px;background:#f5efe4;border-radius:99px;overflow:hidden;min-width:200px;">' +
+          '<div style="height:100%;background:linear-gradient(90deg,#A38D78,#c0a688);width:' + (totalEx ? Math.round(totalWithPhoto/totalEx*100) : 0) + '%;transition:width 300ms;"></div>' +
+        '</div>' +
+      '</div>'
+    );
+
+    for (const [modName, sections] of Object.entries(groups)) {
+      if (!sections.length) continue;
+      html += '<h2 style="font-size:22px;margin:30px 0 14px;color:#3b312c;letter-spacing:-.01em;"><i class="fa-solid fa-' + (modName === 'Mat' ? 'person' : 'dumbbell') + '"></i> ' + esc(modName) + ' Module</h2>';
+      for (const s of sections) {
+        const filled = s.exercises.filter(e => e.url).length;
+        html += (
+          '<div style="background:#fff;border:1px solid #eadfd6;border-radius:20px;margin-bottom:20px;overflow:hidden;">' +
+            '<div style="padding:16px 22px;background:#fbf7f2;border-bottom:1px solid #eadfd6;display:flex;justify-content:space-between;align-items:center;">' +
+              '<div style="font-weight:700;font-size:16px;color:#3b312c;">' + esc(s.section.title) + '</div>' +
+              '<div style="font-size:13px;color:#7a6a5f;">' + filled + ' / ' + s.exercises.length + ' with photo</div>' +
+            '</div>' +
+            '<div style="padding:16px 22px;">'
+        );
+        if (s.exercises.length === 0) {
+          html += '<div style="color:#8a7d6a;font-style:italic;">No exercises detected in this section.</div>';
+        } else {
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">';
+          for (const e of s.exercises) {
+            html += (
+              '<div class="numa-ex-tile" data-section="' + esc(s.sid) + '" data-slug="' + esc(e.slug) + '" data-title="' + esc(e.title) + '" style="border:1px solid #eadfd6;border-radius:14px;overflow:hidden;background:#fbf7f2;">' +
+                '<div style="padding:10px 14px;background:#fff;border-bottom:1px solid #eadfd6;font-weight:600;font-size:14px;color:#3b312c;">' + esc(e.title) + '</div>' +
+                '<div class="numa-ex-tile-slot" style="position:relative;">' +
+                  (e.url
+                    ? '<img src="' + esc(e.url) + '" alt="' + esc(e.title) + '" style="display:block;width:100%;height:180px;object-fit:cover;">' +
+                      '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
+                        '<button type="button" class="numa-ex-replace" style="background:rgba(255,255,255,0.95);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
+                        '<button type="button" class="numa-ex-delete" style="background:rgba(255,255,255,0.95);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
+                      '</div>'
+                    : '<label class="numa-ex-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;cursor:pointer;color:#7a6a5f;text-align:center;padding:16px;">' +
+                        '<i class="fa-solid fa-cloud-arrow-up" style="font-size:34px;color:#A38D78;margin-bottom:8px;"></i>' +
+                        '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
+                        '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">Click or drop a file</div>' +
+                        '<input type="file" accept="image/*" style="display:none;">' +
+                      '</label>'
+                  ) +
+                '</div>' +
+              '</div>'
+            );
+          }
+          html += '</div>';
+        }
+        html += '</div></div>';
+      }
+    }
+    body.innerHTML = html;
+    wireAllTiles();
+  }
+
+  function wireAllTiles() {
+    document.querySelectorAll('.numa-ex-tile').forEach(tile => {
+      if (tile.__wired) return;
+      tile.__wired = true;
+      const sectionId = tile.getAttribute('data-section');
+      const slug = tile.getAttribute('data-slug');
+      const title = tile.getAttribute('data-title');
+      const slot = tile.querySelector('.numa-ex-tile-slot');
+
+      function refreshFrom(url) {
+        if (url) {
+          slot.innerHTML =
+            '<img src="' + esc(url) + '" alt="' + esc(title) + '" style="display:block;width:100%;height:180px;object-fit:cover;">' +
+            '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
+              '<button type="button" class="numa-ex-replace" style="background:rgba(255,255,255,0.95);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
+              '<button type="button" class="numa-ex-delete" style="background:rgba(255,255,255,0.95);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
+            '</div>';
+        } else {
+          slot.innerHTML =
+            '<label class="numa-ex-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;cursor:pointer;color:#7a6a5f;text-align:center;padding:16px;">' +
+              '<i class="fa-solid fa-cloud-arrow-up" style="font-size:34px;color:#A38D78;margin-bottom:8px;"></i>' +
+              '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
+              '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">Click or drop a file</div>' +
+              '<input type="file" accept="image/*" style="display:none;">' +
+            '</label>';
+        }
+        tile.__wired = false;
+        wireAllTiles();
+      }
+
+      async function upload(file) {
+        slot.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;color:#7a6a5f;"><i class="fa-solid fa-spinner fa-spin" style="font-size:28px;color:#A38D78;"></i><div style="margin-top:10px;font-size:12px;">Uploading...</div></div>';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const token = await getToken();
+          const r = await fetch(apiBase() + '/api/admin/upload', {
+            method: 'POST',
+            headers: token ? { Authorization: 'Bearer ' + token } : {},
+            body: fd
+          });
+          const data = await r.json();
+          if (!r.ok || !data.url) throw new Error(data.error || 'upload failed');
+          let url = data.absoluteUrl || (apiBase() + data.url);
+          if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
+          // Save mapping
+          const saveR = await fetch(apiBase() + '/api/admin/exercise-images', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || '') },
+            body: JSON.stringify({ section_id: sectionId, exercise_slug: slug, exercise_title: title, image_url: url })
+          });
+          if (!saveR.ok) throw new Error('save failed');
+          refreshFrom(url);
+        } catch (err) {
+          alert('Upload failed: ' + (err.message || 'unknown'));
+          refreshFrom(null);
+        }
+      }
+
+      const input = slot.querySelector('input[type=file]');
+      if (input) {
+        input.addEventListener('change', () => {
+          const f = input.files && input.files[0];
+          if (f) upload(f);
+        });
+      }
+      const label = slot.querySelector('label.numa-ex-drop');
+      if (label) {
+        label.addEventListener('dragover', (e) => { e.preventDefault(); label.style.background = '#f5efe4'; });
+        label.addEventListener('dragleave', () => { label.style.background = ''; });
+        label.addEventListener('drop', (e) => {
+          e.preventDefault(); label.style.background = '';
+          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) upload(f);
+        });
+      }
+      const replaceBtn = slot.querySelector('.numa-ex-replace');
+      if (replaceBtn) {
+        replaceBtn.addEventListener('click', () => {
+          refreshFrom(null);
+          setTimeout(() => { const i = slot.querySelector('input[type=file]'); if (i) i.click(); }, 30);
+        });
+      }
+      const delBtn = slot.querySelector('.numa-ex-delete');
+      if (delBtn) {
+        delBtn.addEventListener('click', async () => {
+          if (!confirm('Delete this exercise photo?')) return;
+          const token = await getToken();
+          await fetch(apiBase() + '/api/admin/exercise-images/' + encodeURIComponent(sectionId) + '/' + encodeURIComponent(slug), {
+            method: 'DELETE',
+            headers: token ? { Authorization: 'Bearer ' + token } : {}
+          });
+          refreshFrom(null);
+        });
+      }
+    });
+  }
 })();
