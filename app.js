@@ -9078,16 +9078,21 @@ async function loadAdminHomeworkInbox() {
   // 'tr'   = look for <tr> rows where first <td> is the exercise name
   // 'auto' = auto-detect (try cards first, then rows)
   var TARGETS = {
-    '3-1':  { mode: 'card',  label: 'Mat Exercise' },   // Mat Part 1
-    '3-2':  { mode: 'card',  label: 'Mat Exercise' },   // Mat Part 2
-    '4-1':  { mode: 'tr',    label: 'Reformer' },       // Reformer Anatomy
-    '4-2':  { mode: 'tr',    label: 'Reformer' },       // Supine
-    '4-3':  { mode: 'tr',    label: 'Reformer' },       // Long Box / Short Box
-    '4-4':  { mode: 'tr',    label: 'Reformer' },       // Kneeling & Standing
-    '4-5':  { mode: 'card',  label: 'Reformer' },       // Class Flows (h4)
-    '4-6':  { mode: 'card',  label: 'Reformer' },       // Advanced/Additional
-    '4-7':  { mode: 'card',  label: 'Reformer' },       // Feet in Straps
-    '4-8':  { mode: 'auto',  label: 'Jumpboard' }       // Jumpboard (mixed)
+    '3-1':  { mode: 'card',  label: 'Mat Exercise' },
+    '3-2':  { mode: 'card',  label: 'Mat Exercise' },
+    '3-3':  { mode: 'card',  label: 'Mat Sculpt' },
+    '3-4':  { mode: 'card',  label: 'Magic Circle' },
+    '3-5':  { mode: 'card',  label: 'Overball' },
+    '3-6':  { mode: 'card',  label: 'Prop' },
+    '3-8':  { mode: 'card',  label: 'Modification' },
+    '4-1':  { mode: 'tr',    label: 'Apparatus' },
+    '4-2':  { mode: 'tr',    label: 'Reformer' },
+    '4-3':  { mode: 'tr',    label: 'Reformer' },
+    '4-4':  { mode: 'tr',    label: 'Reformer' },
+    '4-5':  { mode: 'card',  label: 'Class Flow' },
+    '4-6':  { mode: 'card',  label: 'Reformer' },
+    '4-7':  { mode: 'card',  label: 'Reformer' },
+    '4-8':  { mode: 'auto',  label: 'Jumpboard' }
   };
 
   var _cache = {};   // sectionId -> { slug: {url,title} }
@@ -9363,13 +9368,16 @@ async function loadAdminHomeworkInbox() {
   var TARGETS = {
     '3-1': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 1)' },
     '3-2': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 2)' },
+    '3-3': { mode: 'card', module: 'Mat',      section: 'Classical Mat Levels & Sculpt Integration' },
     '3-4': { mode: 'card', module: 'Mat',      section: 'Props: Magic Circle' },
     '3-5': { mode: 'card', module: 'Mat',      section: 'Props: Overball / Squishy Ball' },
     '3-6': { mode: 'card', module: 'Mat',      section: 'Props: Stability Ball & Bands' },
+    '3-8': { mode: 'card', module: 'Mat',      section: 'Modifications and Variations' },
     '4-1': { mode: 'tr',   module: 'Reformer', section: 'Reformer Anatomy & Safety' },
     '4-2': { mode: 'tr',   module: 'Reformer', section: 'Supine Exercises' },
     '4-3': { mode: 'tr',   module: 'Reformer', section: 'Long Box & Short Box' },
     '4-4': { mode: 'tr',   module: 'Reformer', section: 'Kneeling & Standing' },
+    '4-5': { mode: 'card', module: 'Reformer', section: 'Three Example Class Flows' },
     '4-6': { mode: 'card', module: 'Reformer', section: 'Advanced & Additional' },
     '4-7': { mode: 'card', module: 'Reformer', section: 'Feet in Straps' },
     '4-8': { mode: 'auto', module: 'Reformer', section: 'Jumpboard' }
