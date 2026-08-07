@@ -1333,11 +1333,6 @@ function renderAdminContent() {
       <h3>Enrollment Codes</h3>
       <p>Create codes for new students to sign up</p>
     </div>
-    <div class="admin-overview-card" onclick="navigate('admin',{view:'exerciseImages'})">
-      <div class="admin-overview-icon"><i class="fa-solid fa-images"></i></div>
-      <h3>Exercise Photos</h3>
-      <p>Upload a reference photo for every Mat and Reformer exercise</p>
-    </div>
     <div class="admin-overview-card" onclick="navigate('admin',{view:'questions'})">
       <div class="admin-overview-icon"><i class="fa-solid fa-inbox"></i></div>
       <h3>Student Questions</h3>
@@ -2073,7 +2068,6 @@ window.renderAdminContent = function() {
   if (p.view === 'editSection') return renderSectionEditor(p.moduleId, p.sectionId);
   if (p.view === 'newModule') return renderModuleEditor(null);
   if (p.view === 'newSection') return renderSectionEditor(p.moduleId, null);
-  if (p.view === 'exerciseImages') return renderExerciseImagesAdmin();
   return _origRenderAdminContent();
 };
 renderAdminContent = window.renderAdminContent;
@@ -3021,6 +3015,11 @@ function renderAccountSettings() {
         </div>
         <button class="btn btn-primary" onclick="saveAccountPassword()"><i class="fa-solid fa-lock"></i> Change Password</button>
         <div id="acct-pw-status" style="margin-top:12px;"></div>
+      </div></div>
+
+      <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
+        <h3 style="margin-bottom:16px;"><i class="fa-solid fa-file-signature"></i> Signed Documents</h3>
+        <div id="acct-signed-docs"><p class="text-muted" style="margin:0;">Loading…</p></div>
       </div></div>
 
       ${!isAdmin ? `
@@ -9066,597 +9065,495 @@ async function loadAdminHomeworkInbox() {
   };
 })();
 
-// ===== NUMA_EXERCISE_IMAGES =====
-// Adds an image slot (with upload box for admins) next to every exercise
-// in the Mat and Reformer sections.
-(function(){
-  if (window.__NUMA_EX_IMG__) return;
-  window.__NUMA_EX_IMG__ = true;
 
-  // Sections that should get image slots. Keys are section IDs.
-  // 'card' = look for .exercise-card elements
-  // 'tr'   = look for <tr> rows where first <td> is the exercise name
-  // 'auto' = auto-detect (try cards first, then rows)
-  var TARGETS = {
-    '3-1':  { mode: 'card',  label: 'Mat Exercise' },
-    '3-2':  { mode: 'card',  label: 'Mat Exercise' },
-    '3-3':  { mode: 'card',  label: 'Mat Sculpt' },
-    '3-4':  { mode: 'card',  label: 'Magic Circle' },
-    '3-5':  { mode: 'card',  label: 'Overball' },
-    '3-6':  { mode: 'card',  label: 'Prop' },
-    '3-8':  { mode: 'card',  label: 'Modification' },
-    '4-1':  { mode: 'tr',    label: 'Apparatus' },
-    '4-2':  { mode: 'tr',    label: 'Reformer' },
-    '4-3':  { mode: 'tr',    label: 'Reformer' },
-    '4-4':  { mode: 'tr',    label: 'Reformer' },
-    '4-5':  { mode: 'card',  label: 'Class Flow' },
-    '4-6':  { mode: 'card',  label: 'Reformer' },
-    '4-7':  { mode: 'card',  label: 'Reformer' },
-    '4-8':  { mode: 'auto',  label: 'Jumpboard' }
+// ============================================================================
+// NUMA_SIGNED_DOCS — required-document signature flow
+// - Blocks the dashboard with a modal until all required documents are signed
+// - Renders the "Signed Documents" list on Account Settings
+// - Adds an admin dashboard tile + admin page listing every user's signed docs
+// ============================================================================
+(function NUMA_SIGNED_DOCS() {
+  'use strict';
+  if (window.__NUMA_SIGNED_DOCS__) return;
+  window.__NUMA_SIGNED_DOCS__ = true;
+
+  const NS = {};
+  window.numaSignedDocs = NS;
+
+  function _isLoggedIn() {
+    return !!(window.APP && APP.currentUser && APP.currentUser.username);
+  }
+  function _apiBase() {
+    return (typeof API_BASE === 'string' && API_BASE) || '';
+  }
+  function _token() {
+    try { return localStorage.getItem('numa_token') || ''; } catch (_) { return ''; }
+  }
+  async function _get(path) {
+    const r = await fetch(_apiBase() + path, {
+      headers: { 'Authorization': 'Bearer ' + _token() }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  }
+  async function _post(path, body) {
+    const r = await fetch(_apiBase() + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _token() },
+      body: JSON.stringify(body || {})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    return data;
+  }
+
+  // ---------- Blocking modal ----------
+  let _modal = null;
+  let _canvas = null;
+  let _canvasCtx = null;
+  let _isDrawing = false;
+  let _hasDrawn = false;
+
+  function _todayIso() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+  }
+
+  function _closeModal() {
+    if (_modal && _modal.parentNode) _modal.parentNode.removeChild(_modal);
+    _modal = null;
+    _canvas = null;
+    _canvasCtx = null;
+    _hasDrawn = false;
+  }
+
+  function _openModal(doc) {
+    _closeModal();
+    const overlay = document.createElement('div');
+    overlay.className = 'numa-sign-overlay';
+    overlay.setAttribute('data-numa-sign', '1');
+    overlay.innerHTML = `
+      <div class="numa-sign-modal">
+        <div class="numa-sign-header">
+          <div>
+            <div class="numa-sign-eyebrow">Required Signature</div>
+            <h2>${escapeHtml(doc.title)}</h2>
+            <p class="numa-sign-sub">${escapeHtml(doc.description || 'Please read this agreement and sign at the bottom before continuing to your dashboard.')}</p>
+          </div>
+        </div>
+        <div class="numa-sign-body">
+          <div class="numa-sign-pdf-wrap">
+            <iframe class="numa-sign-pdf" src="${escapeAttr(doc.template_url)}#toolbar=0&view=FitH" title="Enrollment Agreement"></iframe>
+          </div>
+          <div class="numa-sign-form">
+            <h3>Sign to continue</h3>
+            <p class="numa-sign-form-sub">By signing below you acknowledge you have read and agree to the Enrollment, Course Use, Confidentiality & Training Agreement.</p>
+            <div class="numa-sign-field">
+              <label>Full legal name</label>
+              <input id="numa-sign-name" type="text" class="form-control" placeholder="e.g. Jane A. Smith" autocomplete="off">
+            </div>
+            <div class="numa-sign-field">
+              <label>Date</label>
+              <input id="numa-sign-date" type="date" class="form-control" value="${_todayIso()}">
+            </div>
+            <div class="numa-sign-field">
+              <label>Email</label>
+              <input id="numa-sign-email" type="email" class="form-control" value="${escapeAttr((APP.currentUser && APP.currentUser.email) || '')}" autocomplete="off">
+            </div>
+            <div class="numa-sign-field">
+              <label>Signature — draw with your mouse or finger</label>
+              <div class="numa-sign-canvas-wrap">
+                <canvas id="numa-sign-canvas" width="480" height="140"></canvas>
+                <div class="numa-sign-canvas-hint">Sign here</div>
+                <button type="button" class="numa-sign-clear" onclick="numaSignedDocs.clearSignature()">
+                  <i class="fa-solid fa-eraser"></i> Clear
+                </button>
+              </div>
+            </div>
+            <label class="numa-sign-check">
+              <input type="checkbox" id="numa-sign-agree">
+              <span>I have read and agree to this Agreement.</span>
+            </label>
+            <div id="numa-sign-status" class="numa-sign-status"></div>
+            <button id="numa-sign-submit" class="btn btn-primary numa-sign-submit"
+              onclick="numaSignedDocs.submit(${doc.id})">
+              <i class="fa-solid fa-file-signature"></i> Sign & Continue
+            </button>
+            <p class="numa-sign-footer-note">You cannot access your dashboard until this document is signed. Once signed, a completed PDF will be saved to your account under Account Settings → Signed Documents.</p>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    _modal = overlay;
+
+    // Wire the signature canvas.
+    _canvas = document.getElementById('numa-sign-canvas');
+    if (_canvas) {
+      _canvasCtx = _canvas.getContext('2d');
+      _canvasCtx.strokeStyle = '#221a13';
+      _canvasCtx.lineWidth = 2.5;
+      _canvasCtx.lineJoin = 'round';
+      _canvasCtx.lineCap = 'round';
+      // High-DPI scaling for crisp lines
+      const dpr = window.devicePixelRatio || 1;
+      const rect = _canvas.getBoundingClientRect();
+      _canvas.width = rect.width * dpr;
+      _canvas.height = rect.height * dpr;
+      _canvasCtx = _canvas.getContext('2d');
+      _canvasCtx.scale(dpr, dpr);
+      _canvasCtx.strokeStyle = '#221a13';
+      _canvasCtx.lineWidth = 2.5;
+      _canvasCtx.lineJoin = 'round';
+      _canvasCtx.lineCap = 'round';
+
+      const posFor = (evt) => {
+        const rect2 = _canvas.getBoundingClientRect();
+        const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+        const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+        return { x: clientX - rect2.left, y: clientY - rect2.top };
+      };
+      const start = (evt) => {
+        evt.preventDefault();
+        _isDrawing = true;
+        _hasDrawn = true;
+        const p = posFor(evt);
+        _canvasCtx.beginPath();
+        _canvasCtx.moveTo(p.x, p.y);
+        const hint = _modal && _modal.querySelector('.numa-sign-canvas-hint');
+        if (hint) hint.style.display = 'none';
+      };
+      const move = (evt) => {
+        if (!_isDrawing) return;
+        evt.preventDefault();
+        const p = posFor(evt);
+        _canvasCtx.lineTo(p.x, p.y);
+        _canvasCtx.stroke();
+      };
+      const end = () => { _isDrawing = false; };
+      _canvas.addEventListener('mousedown', start);
+      _canvas.addEventListener('mousemove', move);
+      _canvas.addEventListener('mouseup', end);
+      _canvas.addEventListener('mouseleave', end);
+      _canvas.addEventListener('touchstart', start, { passive: false });
+      _canvas.addEventListener('touchmove', move, { passive: false });
+      _canvas.addEventListener('touchend', end);
+    }
+
+    // Prefill full name from user
+    const nameInput = document.getElementById('numa-sign-name');
+    if (nameInput && APP.currentUser) {
+      const fn = APP.currentUser.fullName || APP.currentUser.full_name || '';
+      if (fn) nameInput.value = fn;
+    }
+
+    // Block ESC and background scroll
+    document.body.style.overflow = 'hidden';
+    const trap = (e) => { if (e.key === 'Escape') e.preventDefault(); };
+    document.addEventListener('keydown', trap, true);
+    overlay.__trap = trap;
+  }
+
+  NS.clearSignature = function () {
+    if (!_canvasCtx || !_canvas) return;
+    _canvasCtx.clearRect(0, 0, _canvas.width, _canvas.height);
+    _hasDrawn = false;
+    const hint = _modal && _modal.querySelector('.numa-sign-canvas-hint');
+    if (hint) hint.style.display = '';
   };
 
-  var _cache = {};   // sectionId -> { slug: {url,title} }
-  var _apiBase = null;
-  function apiBase() {
-    if (_apiBase !== null) return _apiBase;
-    _apiBase = (typeof API_BASE !== 'undefined' && API_BASE !== null && API_BASE !== undefined)
-      ? API_BASE : (window.NUMA_API_BASE || '');
-    return _apiBase;
-  }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function slugify(s) {
-    return String(s || '').toLowerCase()
-      .replace(/&[a-z]+;/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 100) || 'exercise';
-  }
-  function isAdmin() {
-    try { return !!(window.APP && APP.currentUser && APP.currentUser.isAdmin); }
-    catch (_) { return false; }
-  }
-
-  async function loadImages(sectionId) {
-    if (_cache[sectionId]) return _cache[sectionId];
+  NS.submit = async function (docId) {
+    const status = document.getElementById('numa-sign-status');
+    const btn = document.getElementById('numa-sign-submit');
+    const name = (document.getElementById('numa-sign-name') || {}).value || '';
+    const date = (document.getElementById('numa-sign-date') || {}).value || '';
+    const email = (document.getElementById('numa-sign-email') || {}).value || '';
+    const agreed = (document.getElementById('numa-sign-agree') || {}).checked;
+    const setErr = (msg) => { if (status) status.innerHTML = '<span style="color:#c46a4a">' + escapeHtml(msg) + '</span>'; };
+    if (!name.trim()) return setErr('Please type your full legal name.');
+    if (!date) return setErr('Please choose a date.');
+    if (!agreed) return setErr('Please tick the checkbox to confirm you agree.');
+    if (!_hasDrawn || !_canvas) return setErr('Please draw your signature.');
+    const dataUrl = _canvas.toDataURL('image/png');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving\u2026'; }
+    if (status) status.innerHTML = '<span class="text-muted">Saving your signature and generating your signed PDF\u2026</span>';
     try {
-      const token = localStorage.getItem('numa_token');
-      const res = await fetch(apiBase() + '/api/exercise-images/' + encodeURIComponent(sectionId), {
-        headers: token ? { Authorization: 'Bearer ' + token } : {}
+      await _post('/api/required-documents/' + docId + '/sign', {
+        typed_name: name.trim(),
+        typed_date: date,
+        email: email.trim(),
+        signature_data_url: dataUrl,
       });
-      if (!res.ok) throw new Error('http ' + res.status);
-      const data = await res.json();
-      _cache[sectionId] = data || {};
-      return _cache[sectionId];
-    } catch (_) {
-      _cache[sectionId] = {};
-      return _cache[sectionId];
-    }
-  }
-
-  async function saveImage(sectionId, slug, title, url) {
-    const token = localStorage.getItem('numa_token');
-    const res = await fetch(apiBase() + '/api/admin/exercise-images', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || '') },
-      body: JSON.stringify({ section_id: sectionId, exercise_slug: slug, exercise_title: title, image_url: url })
-    });
-    if (!res.ok) throw new Error('save failed');
-    _cache[sectionId] = _cache[sectionId] || {};
-    _cache[sectionId][slug] = { url: url, title: title };
-    return await res.json();
-  }
-
-  async function deleteImage(sectionId, slug) {
-    const token = localStorage.getItem('numa_token');
-    const res = await fetch(apiBase() + '/api/admin/exercise-images/' + encodeURIComponent(sectionId) + '/' + encodeURIComponent(slug), {
-      method: 'DELETE',
-      headers: token ? { Authorization: 'Bearer ' + token } : {}
-    });
-    if (_cache[sectionId]) delete _cache[sectionId][slug];
-    return res.ok;
-  }
-
-  function imageSlotHTML(sectionId, slug, title, existing) {
-    const url = existing && existing.url;
-    const admin = isAdmin();
-    return (
-      '<div class="numa-ex-img" data-section="' + esc(sectionId) + '" data-slug="' + esc(slug) + '" data-title="' + esc(title) + '" ' +
-      'style="margin:14px 0 6px;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;background:#fbf7f2;">' +
-        (url
-          ? '<div style="position:relative;">' +
-              '<img src="' + esc(url) + '" alt="' + esc(title) + '" style="display:block;width:100%;height:auto;max-height:340px;object-fit:cover;">' +
-              (admin
-                ? '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
-                    '<button type="button" class="numa-ex-img-replace" style="background:rgba(255,255,255,0.9);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
-                    '<button type="button" class="numa-ex-img-delete" style="background:rgba(255,255,255,0.9);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
-                  '</div>'
-                : ''
-              ) +
-            '</div>'
-          : (admin
-              ? '<label class="numa-ex-img-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;cursor:pointer;color:#7a6a5f;text-align:center;">' +
-                  '<i class="fa-solid fa-cloud-arrow-up" style="font-size:28px;color:#A38D78;margin-bottom:8px;"></i>' +
-                  '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
-                  '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">for “' + esc(title) + '”</div>' +
-                  '<input type="file" accept="image/*" style="display:none;">' +
-                '</label>'
-              : '<div style="padding:16px;text-align:center;color:#a89680;font-size:13px;"><i class="fa-regular fa-image"></i> Photo coming soon</div>'
-            )
-        ) +
-      '</div>'
-    );
-  }
-
-  function wireSlot(slot) {
-    if (slot.__wired) return;
-    slot.__wired = true;
-    const sectionId = slot.getAttribute('data-section');
-    const slug = slot.getAttribute('data-slug');
-    const title = slot.getAttribute('data-title');
-
-    // Upload input change
-    const input = slot.querySelector('input[type=file]');
-    if (input) {
-      input.addEventListener('change', async (e) => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const label = slot.querySelector('label');
-        if (label) label.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:22px;color:#A38D78;"></i><div style="margin-top:8px;font-size:12px;color:#7a6a5f;">Uploading ' + esc(file.name) + '...</div>';
-        try {
-          const fd = new FormData();
-          fd.append('file', file);
-          const token = localStorage.getItem('numa_token');
-          const res = await fetch(apiBase() + '/api/admin/upload', {
-            method: 'POST',
-            headers: token ? { Authorization: 'Bearer ' + token } : {},
-            body: fd
-          });
-          const data = await res.json();
-          if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed');
-          let url = data.absoluteUrl || (apiBase() + data.url);
-          if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
-          await saveImage(sectionId, slug, title, url);
-          slot.outerHTML = imageSlotHTML(sectionId, slug, title, { url, title });
-          const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
-          if (fresh) wireSlot(fresh);
-        } catch (err) {
-          alert('Upload failed: ' + (err.message || 'unknown error'));
-          if (label) label.innerHTML = '<i class="fa-solid fa-cloud-arrow-up" style="font-size:28px;color:#A38D78;margin-bottom:8px;"></i><div style="font-weight:600;font-size:13px;color:#3b312c;">Try again</div>';
-        }
-      });
-    }
-
-    // Replace button
-    const replaceBtn = slot.querySelector('.numa-ex-img-replace');
-    if (replaceBtn) {
-      replaceBtn.addEventListener('click', async () => {
-        await deleteImage(sectionId, slug);
-        slot.outerHTML = imageSlotHTML(sectionId, slug, title, null);
-        const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
-        if (fresh) {
-          wireSlot(fresh);
-          const inp = fresh.querySelector('input[type=file]');
-          if (inp) inp.click();
-        }
-      });
-    }
-
-    // Delete button
-    const delBtn = slot.querySelector('.numa-ex-img-delete');
-    if (delBtn) {
-      delBtn.addEventListener('click', async () => {
-        if (!confirm('Delete this exercise photo?')) return;
-        await deleteImage(sectionId, slug);
-        slot.outerHTML = imageSlotHTML(sectionId, slug, title, null);
-        const fresh = document.querySelector('.numa-ex-img[data-section="' + sectionId + '"][data-slug="' + slug + '"]');
-        if (fresh) wireSlot(fresh);
-      });
-    }
-  }
-
-  function textOf(el) {
-    return (el.textContent || '').replace(/\s+/g, ' ').trim();
-  }
-
-  async function decorate(container, sectionId, config) {
-    const images = await loadImages(sectionId);
-    let count = 0;
-
-    // Card mode: look for .exercise-card
-    if (config.mode === 'card' || config.mode === 'auto') {
-      const cards = container.querySelectorAll('.exercise-card');
-      cards.forEach(card => {
-        if (card.__numaImgInjected) return;
-        const heading = card.querySelector('h3, h4, h5');
-        const title = heading ? textOf(heading) : ('Exercise ' + (++count));
-        const slug = slugify(title);
-        card.__numaImgInjected = true;
-        const wrap = document.createElement('div');
-        wrap.innerHTML = imageSlotHTML(sectionId, slug, title, images[slug]);
-        const slot = wrap.firstElementChild;
-        // Insert right after the heading if there is one; otherwise prepend
-        if (heading && heading.parentNode === card) {
-          heading.insertAdjacentElement('afterend', slot);
-        } else {
-          card.insertBefore(slot, card.firstChild);
-        }
-        wireSlot(slot);
-      });
-      if (cards.length > 0 && config.mode === 'auto') return; // don't also do rows
-    }
-
-    // TR mode: look for exercise rows in tables. Skip the header row.
-    if (config.mode === 'tr' || config.mode === 'auto') {
-      const tables = container.querySelectorAll('table');
-      tables.forEach(tbl => {
-        // Determine if this table looks like an exercise table.
-        // We look at the first data row: if the first cell is short and
-        // looks like an exercise name (not a heading like "Beginner"), we treat rows as exercises.
-        const rows = tbl.querySelectorAll('tr');
-        rows.forEach((row, idx) => {
-          if (row.__numaImgInjected) return;
-          if (row.querySelector('th')) return; // header
-          const firstTd = row.querySelector('td');
-          if (!firstTd) return;
-          const title = textOf(firstTd);
-          if (!title || title.length < 2 || title.length > 80) return;
-          // Skip rows that clearly aren't exercises (numbers/short words alone)
-          if (/^(yes|no|n\/a|-|beginner|intermediate|advanced)$/i.test(title)) return;
-          const slug = slugify(title);
-          row.__numaImgInjected = true;
-          // Insert an image slot as its own row spanning all columns, right after this one
-          const cols = row.children.length;
-          const imgTr = document.createElement('tr');
-          imgTr.className = 'numa-ex-img-row';
-          const td = document.createElement('td');
-          td.colSpan = cols;
-          td.style.cssText = 'padding:0;background:#fbf7f2;';
-          td.innerHTML = imageSlotHTML(sectionId, slug, title, images[slug]);
-          imgTr.appendChild(td);
-          row.parentNode.insertBefore(imgTr, row.nextSibling);
-          const slot = td.firstElementChild;
-          if (slot) wireSlot(slot);
-        });
-      });
-    }
-  }
-
-  // Hook into renderModulePage — after it renders, walk the DOM and decorate.
-  function wireHook() {
-    if (typeof renderModulePage !== 'function') return false;
-    if (window.__NUMA_EX_IMG_HOOKED__) return true;
-    window.__NUMA_EX_IMG_HOOKED__ = true;
-    const _orig = renderModulePage;
-    window.renderModulePage = function(moduleId, sectionId) {
-      const html = _orig.apply(this, arguments);
-      // Defer until DOM is painted
+      if (status) status.innerHTML = '<span style="color:#2e7d32"><i class="fa-solid fa-check"></i> Signed. Loading your dashboard\u2026</span>';
       setTimeout(() => {
-        const container = document.querySelector('.module-content');
-        if (!container) return;
-        // The currentSection ID = <moduleId>-<idx>; look at every target
-        for (const [sid, cfg] of Object.entries(TARGETS)) {
-          if (!sid.startsWith(String(moduleId) + '-')) continue;
-          // Only decorate if this section is the one currently rendered.
-          // We use the sectionId param when present, else default to first section.
-          // Match by whether container HTML looks like it belongs to this section — cheap heuristic:
-          // just try all — decorate() is idempotent per-card.
-          if (sectionId ? sid === sectionId : true) {
-            decorate(container, sid, cfg).catch(() => {});
-          }
-        }
-      }, 30);
-      return html;
-    };
-    return true;
-  }
-
-  if (!wireHook()) {
-    // Retry until app.js has defined renderModulePage
-    const iv = setInterval(() => { if (wireHook()) clearInterval(iv); }, 500);
-  }
-
-  // Expose for debugging
-  window.numaExerciseImages = { loadImages, saveImage, deleteImage, TARGETS };
-})();
-
-// ===== NUMA_EXERCISE_IMAGES_ADMIN =====
-// Dedicated admin page: one upload box per exercise across all Mat + Reformer sections.
-(function(){
-  if (window.__NUMA_EX_IMG_ADMIN__) return;
-  window.__NUMA_EX_IMG_ADMIN__ = true;
-
-  var TARGETS = {
-    '3-1': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 1)' },
-    '3-2': { mode: 'card', module: 'Mat',      section: 'The 34 Mat Exercises (Part 2)' },
-    '3-3': { mode: 'card', module: 'Mat',      section: 'Classical Mat Levels & Sculpt Integration' },
-    '3-4': { mode: 'card', module: 'Mat',      section: 'Props: Magic Circle' },
-    '3-5': { mode: 'card', module: 'Mat',      section: 'Props: Overball / Squishy Ball' },
-    '3-6': { mode: 'card', module: 'Mat',      section: 'Props: Stability Ball & Bands' },
-    '3-8': { mode: 'card', module: 'Mat',      section: 'Modifications and Variations' },
-    '4-1': { mode: 'tr',   module: 'Reformer', section: 'Reformer Anatomy & Safety' },
-    '4-2': { mode: 'tr',   module: 'Reformer', section: 'Supine Exercises' },
-    '4-3': { mode: 'tr',   module: 'Reformer', section: 'Long Box & Short Box' },
-    '4-4': { mode: 'tr',   module: 'Reformer', section: 'Kneeling & Standing' },
-    '4-5': { mode: 'card', module: 'Reformer', section: 'Three Example Class Flows' },
-    '4-6': { mode: 'card', module: 'Reformer', section: 'Advanced & Additional' },
-    '4-7': { mode: 'card', module: 'Reformer', section: 'Feet in Straps' },
-    '4-8': { mode: 'auto', module: 'Reformer', section: 'Jumpboard' }
+        document.body.style.overflow = '';
+        if (_modal && _modal.__trap) document.removeEventListener('keydown', _modal.__trap, true);
+        _closeModal();
+        // Re-check for any other pending required docs.
+        NS.checkAndBlock();
+      }, 700);
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-file-signature"></i> Sign & Continue'; }
+      setErr(err.message || 'Something went wrong. Please try again.');
+    }
   };
 
-  function apiBase() {
-    return (typeof API_BASE !== 'undefined' && API_BASE !== null && API_BASE !== undefined)
-      ? API_BASE : (window.NUMA_API_BASE || '');
-  }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function slugify(s) {
-    return String(s || '').toLowerCase().replace(/&[a-z]+;/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100) || 'exercise';
-  }
-  function textOf(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
-
-  async function getToken() { return localStorage.getItem('numa_token'); }
-
-  async function fetchSection(sectionId) {
-    const token = await getToken();
-    const modId = sectionId.split('-')[0];
-    const r = await fetch(apiBase() + '/api/modules/' + modId, {
-      headers: token ? { Authorization: 'Bearer ' + token } : {}
-    });
-    if (!r.ok) return null;
-    const m = await r.json();
-    return (m.sections || []).find(s => s.id === sectionId) || null;
-  }
-
-  async function fetchImages(sectionId) {
-    const token = await getToken();
+  // ---------- Blocking logic ----------
+  NS.checkAndBlock = async function () {
+    if (!_isLoggedIn()) return;
+    // Admins are never blocked.
+    const u = APP.currentUser;
+    if (u.username === 'admin' || u.role === 'admin' || u.isAdmin) return;
     try {
-      const r = await fetch(apiBase() + '/api/exercise-images/' + encodeURIComponent(sectionId), {
-        headers: token ? { Authorization: 'Bearer ' + token } : {}
-      });
-      if (!r.ok) return {};
-      return await r.json();
-    } catch (_) { return {}; }
-  }
-
-  // Extract exercise list from a section's HTML content
-  function extractExercises(sectionId, cfg, html) {
-    const container = document.createElement('div');
-    container.innerHTML = html || '';
-    const list = [];
-    const seen = new Set();
-
-    function add(title) {
-      title = (title || '').trim();
-      if (!title || title.length < 2 || title.length > 100) return;
-      if (/^(yes|no|n\/a|-|beginner|intermediate|advanced|exercise|setup|purpose)$/i.test(title)) return;
-      const slug = slugify(title);
-      if (seen.has(slug)) return;
-      seen.add(slug);
-      list.push({ slug, title });
+      const docs = await _get('/api/required-documents');
+      const pending = docs.filter(d => d.required && !d.signed);
+      if (pending.length === 0) return;
+      // Open the first pending doc; when signed we'll re-check.
+      _openModal(pending[0]);
+    } catch (err) {
+      console.warn('[signed-docs] check failed', err);
     }
-
-    if (cfg.mode === 'card' || cfg.mode === 'auto') {
-      const cards = container.querySelectorAll('.exercise-card');
-      cards.forEach(card => {
-        const h = card.querySelector('h3, h4, h5');
-        if (h) add(textOf(h));
-      });
-    }
-    if (cfg.mode === 'tr' || cfg.mode === 'auto') {
-      const tables = container.querySelectorAll('table');
-      tables.forEach(tbl => {
-        const rows = tbl.querySelectorAll('tr');
-        rows.forEach(row => {
-          if (row.querySelector('th')) return;
-          const firstTd = row.querySelector('td');
-          if (!firstTd) return;
-          add(textOf(firstTd));
-        });
-      });
-    }
-    return list;
-  }
-
-  window.renderExerciseImagesAdmin = function() {
-    // Async-fill; return a shell immediately
-    setTimeout(loadAndRender, 30);
-    return (
-      '<div class="page-header fade-in" style="margin-bottom:20px;">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
-          '<div>' +
-            '<h1><i class="fa-solid fa-images"></i> Exercise Photos</h1>' +
-            '<p>Upload a reference photo for every Mat and Reformer exercise. Photos appear inline for students in the module reader.</p>' +
-          '</div>' +
-          '<button class="btn btn-secondary" onclick="navigate(\'admin\')"><i class="fa-solid fa-arrow-left"></i> Back to Admin</button>' +
-        '</div>' +
-      '</div>' +
-      '<div id="numa-ex-admin-body" style="min-height:200px;">' +
-        '<div style="text-align:center;padding:40px;color:#7a6a5f;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><div style="margin-top:10px;">Loading exercises...</div></div>' +
-      '</div>'
-    );
   };
 
-  async function loadAndRender() {
-    const body = document.getElementById('numa-ex-admin-body');
-    if (!body) return;
-    // Group by module
-    const groups = { Mat: [], Reformer: [] };
-    const entries = Object.entries(TARGETS);
-    // Load in parallel
-    const results = await Promise.all(entries.map(async ([sid, cfg]) => {
-      const section = await fetchSection(sid);
-      if (!section) return null;
-      const images = await fetchImages(sid);
-      const exercises = extractExercises(sid, cfg, section.content).map(e => ({
-        ...e,
-        url: images[e.slug] && images[e.slug].url || null
-      }));
-      return { sid, cfg, section, exercises };
-    }));
-
-    for (const r of results) {
-      if (!r) continue;
-      groups[r.cfg.module].push(r);
+  // Kick off after login / on render — hook onto renderDashboard.
+  function _hookRender() {
+    if (typeof window.renderDashboard === 'function') {
+      const _orig = window.renderDashboard;
+      window.renderDashboard = function () {
+        setTimeout(() => { NS.checkAndBlock().catch(()=>{}); }, 50);
+        return _orig.apply(this, arguments);
+      };
+      window.renderDashboard = window.renderDashboard;
     }
+    // Also check on every navigate() call
+    if (typeof window.navigate === 'function' && !window.__NUMA_NAV_HOOKED_SIGN__) {
+      const _origNav = window.navigate;
+      window.__NUMA_NAV_HOOKED_SIGN__ = true;
+      window.navigate = function () {
+        const r = _origNav.apply(this, arguments);
+        setTimeout(() => { NS.checkAndBlock().catch(()=>{}); }, 60);
+        return r;
+      };
+    }
+  }
+  _hookRender();
+  setTimeout(_hookRender, 500);
+  setTimeout(_hookRender, 2000);
 
-    // Totals
-    let totalEx = 0, totalWithPhoto = 0;
-    for (const g of Object.values(groups)) for (const s of g) { totalEx += s.exercises.length; totalWithPhoto += s.exercises.filter(e => e.url).length; }
+  // Also fire once on load
+  setTimeout(() => { NS.checkAndBlock().catch(()=>{}); }, 800);
 
-    let html = (
-      '<div style="background:#fff;border:1px solid #eadfd6;border-radius:18px;padding:18px 22px;margin-bottom:22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
-        '<div>' +
-          '<div style="font-size:14px;color:#7a6a5f;">Progress</div>' +
-          '<div style="font-size:20px;font-weight:700;color:#3b312c;">' + totalWithPhoto + ' / ' + totalEx + ' exercises have a photo</div>' +
-        '</div>' +
-        '<div style="flex:1;max-width:400px;height:14px;background:#f5efe4;border-radius:99px;overflow:hidden;min-width:200px;">' +
-          '<div style="height:100%;background:linear-gradient(90deg,#A38D78,#c0a688);width:' + (totalEx ? Math.round(totalWithPhoto/totalEx*100) : 0) + '%;transition:width 300ms;"></div>' +
-        '</div>' +
-      '</div>'
-    );
-
-    for (const [modName, sections] of Object.entries(groups)) {
-      if (!sections.length) continue;
-      html += '<h2 style="font-size:22px;margin:30px 0 14px;color:#3b312c;letter-spacing:-.01em;"><i class="fa-solid fa-' + (modName === 'Mat' ? 'person' : 'dumbbell') + '"></i> ' + esc(modName) + ' Module</h2>';
-      for (const s of sections) {
-        const filled = s.exercises.filter(e => e.url).length;
-        html += (
-          '<div style="background:#fff;border:1px solid #eadfd6;border-radius:20px;margin-bottom:20px;overflow:hidden;">' +
-            '<div style="padding:16px 22px;background:#fbf7f2;border-bottom:1px solid #eadfd6;display:flex;justify-content:space-between;align-items:center;">' +
-              '<div style="font-weight:700;font-size:16px;color:#3b312c;">' + esc(s.section.title) + '</div>' +
-              '<div style="font-size:13px;color:#7a6a5f;">' + filled + ' / ' + s.exercises.length + ' with photo</div>' +
+  // ---------- Account Settings > Signed Documents list ----------
+  async function _populateAccountList() {
+    const target = document.getElementById('acct-signed-docs');
+    if (!target) return;
+    try {
+      const rows = await _get('/api/signed-documents');
+      if (!rows.length) {
+        target.innerHTML = '<p class="text-muted" style="margin:0;">You have not signed any documents yet.</p>';
+        return;
+      }
+      const html = rows.map(r => {
+        const when = r.signed_at ? new Date(r.signed_at).toLocaleString() : '';
+        return (
+          '<div class="numa-signed-row">' +
+            '<div>' +
+              '<div class="numa-signed-title"><i class="fa-solid fa-file-signature"></i> ' + escapeHtml(r.title) + '</div>' +
+              '<div class="numa-signed-meta">Signed as <strong>' + escapeHtml(r.typed_name || '') + '</strong> on ' + escapeHtml(when) + '</div>' +
             '</div>' +
-            '<div style="padding:16px 22px;">'
+            '<div>' +
+              (r.signed_pdf_url
+                ? '<a class="btn btn-secondary btn-sm" href="' + escapeAttr(r.signed_pdf_url) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View PDF</a>'
+                : '<span class="text-muted">PDF unavailable</span>') +
+            '</div>' +
+          '</div>'
         );
-        if (s.exercises.length === 0) {
-          html += '<div style="color:#8a7d6a;font-style:italic;">No exercises detected in this section.</div>';
-        } else {
-          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">';
-          for (const e of s.exercises) {
-            html += (
-              '<div class="numa-ex-tile" data-section="' + esc(s.sid) + '" data-slug="' + esc(e.slug) + '" data-title="' + esc(e.title) + '" style="border:1px solid #eadfd6;border-radius:14px;overflow:hidden;background:#fbf7f2;">' +
-                '<div style="padding:10px 14px;background:#fff;border-bottom:1px solid #eadfd6;font-weight:600;font-size:14px;color:#3b312c;">' + esc(e.title) + '</div>' +
-                '<div class="numa-ex-tile-slot" style="position:relative;">' +
-                  (e.url
-                    ? '<img src="' + esc(e.url) + '" alt="' + esc(e.title) + '" style="display:block;width:100%;height:180px;object-fit:cover;">' +
-                      '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
-                        '<button type="button" class="numa-ex-replace" style="background:rgba(255,255,255,0.95);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
-                        '<button type="button" class="numa-ex-delete" style="background:rgba(255,255,255,0.95);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
-                      '</div>'
-                    : '<label class="numa-ex-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;cursor:pointer;color:#7a6a5f;text-align:center;padding:16px;">' +
-                        '<i class="fa-solid fa-cloud-arrow-up" style="font-size:34px;color:#A38D78;margin-bottom:8px;"></i>' +
-                        '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
-                        '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">Click or drop a file</div>' +
-                        '<input type="file" accept="image/*" style="display:none;">' +
-                      '</label>'
-                  ) +
-                '</div>' +
-              '</div>'
-            );
-          }
-          html += '</div>';
-        }
-        html += '</div></div>';
-      }
+      }).join('');
+      target.innerHTML = html;
+    } catch (err) {
+      target.innerHTML = '<p style="color:var(--error);margin:0;">Could not load signed documents.</p>';
     }
-    body.innerHTML = html;
-    wireAllTiles();
+  }
+  // Populate whenever the account settings page renders.
+  const _mo = new MutationObserver(() => {
+    if (document.getElementById('acct-signed-docs') && !document.getElementById('acct-signed-docs').__populated) {
+      document.getElementById('acct-signed-docs').__populated = true;
+      _populateAccountList();
+    }
+  });
+  if (document.body) _mo.observe(document.body, { childList: true, subtree: true });
+
+  // ---------- Admin dashboard tile + admin page ----------
+  function _addAdminTile() {
+    const u = APP && APP.currentUser;
+    if (!u || !u.isAdmin || u.isTeacher) return;
+    const grid = document.querySelector('.admin-overview-grid');
+    if (!grid) return;
+    if (grid.querySelector('[data-numa-signed-card]')) return;
+    const card = document.createElement('div');
+    card.className = 'admin-overview-card';
+    card.setAttribute('data-numa-signed-card', '1');
+    card.setAttribute('onclick', "navigate('admin',{view:'signedDocs'})");
+    card.innerHTML =
+      '<div class="admin-overview-icon"><i class="fa-solid fa-file-signature"></i></div>' +
+      '<h3>Signed Documents</h3>' +
+      '<p>See who has signed the Enrollment Agreement · view each signed PDF</p>';
+    grid.appendChild(card);
+  }
+  const _mo2 = new MutationObserver(_addAdminTile);
+  if (document.body) _mo2.observe(document.body, { childList: true, subtree: true });
+
+  // Route: signedDocs
+  const _origRAC = window.renderAdminContent;
+  if (typeof _origRAC === 'function') {
+    window.renderAdminContent = function () {
+      try {
+        const p = (window.APP && APP.currentParams) || {};
+        if (p.view === 'signedDocs') return _renderAdminSignedDocs();
+      } catch (_) {}
+      return _origRAC.apply(this, arguments);
+    };
+  }
+  function _renderAdminSignedDocs() {
+    setTimeout(_loadAdminSignedDocs, 20);
+    return (
+      '<div class="page-header fade-in">' +
+        '<h1><i class="fa-solid fa-file-signature"></i> Signed Documents</h1>' +
+        '<p>Every student\u2019s signed Enrollment Agreement. Click a row to view or download the completed PDF.</p>' +
+      '</div>' +
+      '<div style="margin-bottom:12px;"><button class="btn btn-secondary" onclick="navigate(\'admin\')"><i class="fa-solid fa-arrow-left"></i> Back</button></div>' +
+      '<div id="numa-admin-signed-wrap" class="card"><div class="card-body"><p class="text-muted">Loading\u2026</p></div></div>'
+    );
+  }
+  async function _loadAdminSignedDocs() {
+    const wrap = document.getElementById('numa-admin-signed-wrap');
+    if (!wrap) return;
+    try {
+      const rows = await _get('/api/admin/signed-documents');
+      if (!rows.length) {
+        wrap.innerHTML = '<div class="card-body"><p class="text-muted">No students have signed the Enrollment Agreement yet.</p></div>';
+        return;
+      }
+      const table =
+        '<div class="card-body" style="padding:0;overflow-x:auto;">' +
+          '<table class="admin-table"><thead><tr>' +
+            '<th>Student</th><th>Username</th><th>Signed As</th><th>Date on Form</th><th>Signed At</th><th>Document</th><th></th>' +
+          '</tr></thead><tbody>' +
+          rows.map(r => (
+            '<tr>' +
+              '<td>' + escapeHtml(r.full_name || '') + '<br><small class="text-muted">' + escapeHtml(r.user_email || r.student_email || '') + '</small></td>' +
+              '<td>' + escapeHtml(r.username || '') + '</td>' +
+              '<td>' + escapeHtml(r.typed_name || '') + '</td>' +
+              '<td>' + escapeHtml(r.typed_date || '') + '</td>' +
+              '<td>' + escapeHtml(r.signed_at ? new Date(r.signed_at).toLocaleString() : '') + '</td>' +
+              '<td>' + escapeHtml(r.title || '') + '</td>' +
+              '<td>' +
+                (r.signed_pdf_url
+                  ? '<a class="btn btn-sm btn-secondary" href="' + escapeAttr(r.signed_pdf_url) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View</a>'
+                  : '<span class="text-muted">\u2014</span>') +
+              '</td>' +
+            '</tr>'
+          )).join('') +
+          '</tbody></table>' +
+        '</div>';
+      wrap.innerHTML = table;
+    } catch (err) {
+      wrap.innerHTML = '<div class="card-body"><p style="color:var(--error);">Failed to load signed documents.</p></div>';
+    }
   }
 
-  function wireAllTiles() {
-    document.querySelectorAll('.numa-ex-tile').forEach(tile => {
-      if (tile.__wired) return;
-      tile.__wired = true;
-      const sectionId = tile.getAttribute('data-section');
-      const slug = tile.getAttribute('data-slug');
-      const title = tile.getAttribute('data-title');
-      const slot = tile.querySelector('.numa-ex-tile-slot');
-
-      function refreshFrom(url) {
-        if (url) {
-          slot.innerHTML =
-            '<img src="' + esc(url) + '" alt="' + esc(title) + '" style="display:block;width:100%;height:180px;object-fit:cover;">' +
-            '<div style="position:absolute;top:8px;right:8px;display:flex;gap:6px;">' +
-              '<button type="button" class="numa-ex-replace" style="background:rgba(255,255,255,0.95);border:none;color:#3b312c;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-pen"></i> Replace</button>' +
-              '<button type="button" class="numa-ex-delete" style="background:rgba(255,255,255,0.95);border:none;color:#8b4a3a;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);"><i class="fa-solid fa-trash"></i></button>' +
-            '</div>';
-        } else {
-          slot.innerHTML =
-            '<label class="numa-ex-drop" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;cursor:pointer;color:#7a6a5f;text-align:center;padding:16px;">' +
-              '<i class="fa-solid fa-cloud-arrow-up" style="font-size:34px;color:#A38D78;margin-bottom:8px;"></i>' +
-              '<div style="font-weight:600;font-size:13px;color:#3b312c;">Upload photo</div>' +
-              '<div style="font-size:11px;color:#8a7d6a;margin-top:2px;">Click or drop a file</div>' +
-              '<input type="file" accept="image/*" style="display:none;">' +
-            '</label>';
-        }
-        tile.__wired = false;
-        wireAllTiles();
-      }
-
-      async function upload(file) {
-        slot.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;color:#7a6a5f;"><i class="fa-solid fa-spinner fa-spin" style="font-size:28px;color:#A38D78;"></i><div style="margin-top:10px;font-size:12px;">Uploading...</div></div>';
-        try {
-          const fd = new FormData();
-          fd.append('file', file);
-          const token = await getToken();
-          const r = await fetch(apiBase() + '/api/admin/upload', {
-            method: 'POST',
-            headers: token ? { Authorization: 'Bearer ' + token } : {},
-            body: fd
-          });
-          const data = await r.json();
-          if (!r.ok || !data.url) throw new Error(data.error || 'upload failed');
-          let url = data.absoluteUrl || (apiBase() + data.url);
-          if (url.startsWith('http://')) url = url.replace(/^http:\/\//, 'https://');
-          // Save mapping
-          const saveR = await fetch(apiBase() + '/api/admin/exercise-images', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || '') },
-            body: JSON.stringify({ section_id: sectionId, exercise_slug: slug, exercise_title: title, image_url: url })
-          });
-          if (!saveR.ok) throw new Error('save failed');
-          refreshFrom(url);
-        } catch (err) {
-          alert('Upload failed: ' + (err.message || 'unknown'));
-          refreshFrom(null);
-        }
-      }
-
-      const input = slot.querySelector('input[type=file]');
-      if (input) {
-        input.addEventListener('change', () => {
-          const f = input.files && input.files[0];
-          if (f) upload(f);
-        });
-      }
-      const label = slot.querySelector('label.numa-ex-drop');
-      if (label) {
-        label.addEventListener('dragover', (e) => { e.preventDefault(); label.style.background = '#f5efe4'; });
-        label.addEventListener('dragleave', () => { label.style.background = ''; });
-        label.addEventListener('drop', (e) => {
-          e.preventDefault(); label.style.background = '';
-          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-          if (f) upload(f);
-        });
-      }
-      const replaceBtn = slot.querySelector('.numa-ex-replace');
-      if (replaceBtn) {
-        replaceBtn.addEventListener('click', () => {
-          refreshFrom(null);
-          setTimeout(() => { const i = slot.querySelector('input[type=file]'); if (i) i.click(); }, 30);
-        });
-      }
-      const delBtn = slot.querySelector('.numa-ex-delete');
-      if (delBtn) {
-        delBtn.addEventListener('click', async () => {
-          if (!confirm('Delete this exercise photo?')) return;
-          const token = await getToken();
-          await fetch(apiBase() + '/api/admin/exercise-images/' + encodeURIComponent(sectionId) + '/' + encodeURIComponent(slug), {
-            method: 'DELETE',
-            headers: token ? { Authorization: 'Bearer ' + token } : {}
-          });
-          refreshFrom(null);
-        });
-      }
-    });
+  // ---------- Small local helpers ----------
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  // ---------- Styles ----------
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    .numa-sign-overlay {
+      position: fixed; inset: 0; background: rgba(30, 22, 15, 0.72);
+      z-index: 100000; display: flex; align-items: center; justify-content: center;
+      padding: 20px; backdrop-filter: blur(6px);
+    }
+    .numa-sign-modal {
+      background: #fbf7f2; color: #2b2118; border-radius: 16px;
+      width: min(1100px, 100%); max-height: 92vh; overflow: hidden;
+      display: flex; flex-direction: column; box-shadow: 0 24px 60px rgba(0,0,0,0.32);
+      border: 1px solid #e6dfd1;
+    }
+    .numa-sign-header {
+      padding: 20px 28px; border-bottom: 1px solid #ecdfcf;
+      background: linear-gradient(180deg, #fbf7f2, #f5eee4);
+    }
+    .numa-sign-eyebrow {
+      text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px;
+      color: #A38D78; font-weight: 700; margin-bottom: 4px;
+    }
+    .numa-sign-header h2 { margin: 0 0 4px; font-size: 22px; color: #2b1c11; }
+    .numa-sign-sub { margin: 0; color: #6b5d51; font-size: 14px; line-height: 1.5; }
+    .numa-sign-body {
+      display: grid; grid-template-columns: 1.4fr 1fr; gap: 0; overflow: hidden;
+      flex: 1; min-height: 0;
+    }
+    @media (max-width: 900px) {
+      .numa-sign-body { grid-template-columns: 1fr; }
+      .numa-sign-pdf-wrap { max-height: 40vh; }
+    }
+    .numa-sign-pdf-wrap {
+      background: #efe7db; border-right: 1px solid #ecdfcf; min-height: 400px;
+    }
+    .numa-sign-pdf { width: 100%; height: 100%; border: 0; display: block; }
+    .numa-sign-form { padding: 20px 24px; overflow-y: auto; }
+    .numa-sign-form h3 { margin: 0 0 4px; font-size: 18px; color: #2b1c11; }
+    .numa-sign-form-sub { margin: 0 0 14px; font-size: 13px; color: #6b5d51; line-height: 1.5; }
+    .numa-sign-field { margin-bottom: 12px; }
+    .numa-sign-field label {
+      display: block; font-size: 12px; font-weight: 700; color: #4a3d33;
+      margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .numa-sign-field .form-control {
+      width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid #e0d4c1;
+      background: #fff; font-size: 14px; color: #2b1c11;
+    }
+    .numa-sign-field .form-control:focus { outline: none; border-color: #A38D78; box-shadow: 0 0 0 3px rgba(163,141,120,0.2); }
+    .numa-sign-canvas-wrap {
+      position: relative; border: 2px dashed #d5c6b0; border-radius: 10px;
+      background: #fff; overflow: hidden; touch-action: none;
+    }
+    #numa-sign-canvas { width: 100%; height: 140px; display: block; cursor: crosshair; touch-action: none; }
+    .numa-sign-canvas-hint {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      pointer-events: none; color: #b7a893; font-style: italic; font-size: 14px;
+    }
+    .numa-sign-clear {
+      position: absolute; top: 6px; right: 6px; padding: 4px 10px; font-size: 11px;
+      background: rgba(255,255,255,0.9); border: 1px solid #e0d4c1; border-radius: 6px;
+      cursor: pointer; color: #6b5d51;
+    }
+    .numa-sign-clear:hover { background: #fff; color: #2b1c11; }
+    .numa-sign-check {
+      display: flex; align-items: flex-start; gap: 8px; margin: 12px 0;
+      font-size: 13px; color: #4a3d33; line-height: 1.4; cursor: pointer;
+    }
+    .numa-sign-check input { margin-top: 3px; }
+    .numa-sign-status { min-height: 22px; font-size: 13px; margin: 6px 0; }
+    .numa-sign-submit { width: 100%; padding: 12px; font-size: 15px; font-weight: 700; }
+    .numa-sign-footer-note {
+      margin: 10px 0 0; font-size: 11px; color: #8b7d72; line-height: 1.5; text-align: center;
+    }
+    .numa-signed-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid #eee3d3; gap: 12px;
+    }
+    .numa-signed-row:last-child { border-bottom: 0; }
+    .numa-signed-title { font-weight: 600; color: #2b1c11; }
+    .numa-signed-meta { font-size: 12px; color: #7a6b5e; margin-top: 2px; }
+  `;
+  document.head.appendChild(styleEl);
 })();

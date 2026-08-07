@@ -8,6 +8,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pool, initDatabase } from './db.js';
 import { seedModulesIfEmpty } from './seed.js';
 
@@ -64,8 +65,19 @@ const videoUpload = multer({
 });
 
 app.use(cors({ origin: '*', credentials: false }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, { maxAge: '7d' }));
+
+// Serve blank/template document PDFs bundled in the repo (read-only).
+const DOCUMENTS_ROOT = path.join(__dirname, '..', 'documents');
+if (fs.existsSync(DOCUMENTS_ROOT)) {
+  app.use('/documents', express.static(DOCUMENTS_ROOT, { maxAge: '7d' }));
+  console.log('[server] Serving document templates from', DOCUMENTS_ROOT);
+}
+
+// Ensure the signed-document folder exists under uploads.
+const SIGNED_DIR = path.join(UPLOAD_ROOT, 'signed');
+if (!fs.existsSync(SIGNED_DIR)) fs.mkdirSync(SIGNED_DIR, { recursive: true });
 
 // ===== STATIC FRONTEND (portal files served from /public) =====
 // Serve index.html, app.js, styles.css, etc. from the repo's /public folder.
@@ -558,68 +570,6 @@ app.get('/api/schedule', authRequired, async (_req, res) => {
   } catch (e) {
     console.error('[schedule list]', e);
     res.status(500).json({ error: 'Failed to load schedule' });
-  }
-});
-
-// ===== Exercise images (per movement inside a section) =====
-app.get('/api/exercise-images/:sectionId', authRequired, async (req, res) => {
-  try {
-    const r = await pool.query(
-      'SELECT exercise_slug, exercise_title, image_url, updated_at FROM exercise_images WHERE section_id = $1',
-      [String(req.params.sectionId)]
-    );
-    const map = {};
-    for (const row of r.rows) map[row.exercise_slug] = { url: row.image_url, title: row.exercise_title, updated_at: row.updated_at };
-    res.json(map);
-  } catch (err) {
-    console.error('exercise-images GET', err);
-    res.status(500).json({ error: 'Failed to load exercise images' });
-  }
-});
-
-app.get('/api/exercise-images', authRequired, async (_req, res) => {
-  try {
-    const r = await pool.query(
-      'SELECT section_id, exercise_slug, exercise_title, image_url, updated_at FROM exercise_images ORDER BY section_id, exercise_slug'
-    );
-    res.json(r.rows);
-  } catch (err) {
-    console.error('exercise-images GET all', err);
-    res.status(500).json({ error: 'Failed to load exercise images' });
-  }
-});
-
-app.put('/api/admin/exercise-images', adminRequired, async (req, res) => {
-  try {
-    const { section_id, exercise_slug, exercise_title, image_url } = req.body || {};
-    if (!section_id || !exercise_slug || !image_url) {
-      return res.status(400).json({ error: 'section_id, exercise_slug and image_url are required' });
-    }
-    const r = await pool.query(
-      `INSERT INTO exercise_images (section_id, exercise_slug, exercise_title, image_url, created_by)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (section_id, exercise_slug)
-       DO UPDATE SET image_url = EXCLUDED.image_url,
-                     exercise_title = COALESCE(EXCLUDED.exercise_title, exercise_images.exercise_title),
-                     updated_at = NOW()
-       RETURNING *`,
-      [String(section_id), String(exercise_slug), exercise_title ? String(exercise_title).slice(0, 300) : null, String(image_url), req.user.id]
-    );
-    res.json(r.rows[0]);
-  } catch (err) {
-    console.error('exercise-images PUT', err);
-    res.status(500).json({ error: 'Failed to save exercise image' });
-  }
-});
-
-app.delete('/api/admin/exercise-images/:sectionId/:slug', adminRequired, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM exercise_images WHERE section_id = $1 AND exercise_slug = $2',
-      [String(req.params.sectionId), String(req.params.slug)]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('exercise-images DELETE', err);
-    res.status(500).json({ error: 'Failed to delete exercise image' });
   }
 });
 
@@ -2500,8 +2450,231 @@ app.post('/api/admin/upload', adminRequired, (req, res) => {
 // ===== SPA FALLBACK =====
 // Any non-API, non-upload GET that doesn't match a real file gets index.html
 // so the portal's hash routing works on direct visits.
+// ===== REQUIRED DOCUMENTS (signature workflow) =====
+// Helper: convert a data URL (data:image/png;base64,...) to a Buffer + mimetype.
+function dataUrlToBuffer(dataUrl) {
+  const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+  if (!m) return null;
+  return { mime: m[1], buffer: Buffer.from(m[2], 'base64') };
+}
+
+// Save a data URL PNG into /uploads/signed/ and return the public URL.
+function saveSignaturePng(dataUrl, prefix) {
+  const parsed = dataUrlToBuffer(dataUrl);
+  if (!parsed) return null;
+  const ext = parsed.mime.includes('png') ? '.png' : (parsed.mime.includes('jpeg') || parsed.mime.includes('jpg') ? '.jpg' : '.png');
+  const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const abs = path.join(SIGNED_DIR, filename);
+  fs.writeFileSync(abs, parsed.buffer);
+  return `/uploads/signed/${filename}`;
+}
+
+// Return the list of required documents and, for each, whether the current user has signed it.
+app.get('/api/required-documents', authRequired, async (req, res) => {
+  try {
+    const docs = await pool.query(
+      `SELECT id, slug, title, description, template_path, required
+       FROM required_documents
+       WHERE active = TRUE
+       ORDER BY id`
+    );
+    const signed = await pool.query(
+      `SELECT document_id, signed_pdf_url, signed_at
+       FROM signed_documents
+       WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const signedMap = {};
+    for (const s of signed.rows) signedMap[s.document_id] = s;
+    const rows = docs.rows.map((d) => ({
+      id: d.id,
+      slug: d.slug,
+      title: d.title,
+      description: d.description,
+      template_url: '/' + d.template_path.replace(/^\/+/, ''),
+      required: d.required,
+      signed: !!signedMap[d.id],
+      signed_pdf_url: signedMap[d.id] ? signedMap[d.id].signed_pdf_url : null,
+      signed_at: signedMap[d.id] ? signedMap[d.id].signed_at : null,
+    }));
+    res.json(rows);
+  } catch (err) {
+    console.error('required-documents GET', err);
+    res.status(500).json({ error: 'Failed to load required documents' });
+  }
+});
+
+// Submit a signature. Body: { document_id, typed_name, typed_date, email, signature_data_url }
+app.post('/api/required-documents/:id/sign', authRequired, async (req, res) => {
+  try {
+    const docId = parseInt(req.params.id, 10);
+    const { typed_name, typed_date, email, signature_data_url } = req.body || {};
+    if (!typed_name || !typed_date || !signature_data_url) {
+      return res.status(400).json({ error: 'Full name, date, and signature are required.' });
+    }
+    const docRow = await pool.query('SELECT * FROM required_documents WHERE id = $1 AND active = TRUE', [docId]);
+    if (docRow.rows.length === 0) return res.status(404).json({ error: 'Document not found.' });
+    const doc = docRow.rows[0];
+
+    // Save the student's drawn signature as a PNG file.
+    const sigUrl = saveSignaturePng(signature_data_url, `sig-user${req.user.id}-doc${docId}`);
+    if (!sigUrl) return res.status(400).json({ error: 'Signature image is invalid.' });
+
+    // Auto-generate a NUMA representative signature (typed script-style rendering into a PNG).
+    // We render server-side via pdf-lib text on the PDF; no separate image file needed for the rep.
+    const repName = 'Christina Morales';
+    const repDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    // Load the template PDF and stamp fields on the acknowledgment page.
+    const templatePath = path.join(__dirname, '..', doc.template_path);
+    if (!fs.existsSync(templatePath)) return res.status(500).json({ error: 'Template PDF is missing on the server.' });
+    const templateBytes = fs.readFileSync(templatePath);
+    const pdfDoc = await PDFDocument.load(templateBytes);
+    const helv = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helvBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const italic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+
+    // Embed the student's signature PNG.
+    const sigParsed = dataUrlToBuffer(signature_data_url);
+    let sigImg = null;
+    if (sigParsed) {
+      try {
+        sigImg = sigParsed.mime.includes('png')
+          ? await pdfDoc.embedPng(sigParsed.buffer)
+          : await pdfDoc.embedJpg(sigParsed.buffer);
+      } catch (_) { sigImg = null; }
+    }
+
+    // Stamp the signature fields on page 3 (the acknowledgment page).
+    const pages = pdfDoc.getPages();
+    const page = pages[pages.length - 1];
+    const { width, height } = page.getSize();
+
+    // Line coordinates on the acknowledgment page (approximate; falls on the printed blanks).
+    // The template uses standard letter-size (612 x 792). The blanks live near the top-middle of
+    // the STUDENT ACKNOWLEDGMENT section. We compute Y from the top so this stays stable if pdf-lib
+    // reports different heights.
+    const FROM_TOP = (y) => height - y;
+    const LEFT = 220;
+
+    const nameY   = FROM_TOP(310);
+    const sigY    = FROM_TOP(343);
+    const dateY   = FROM_TOP(377);
+    const emailY  = FROM_TOP(411);
+    const repY    = FROM_TOP(445);
+    const repSigY = FROM_TOP(478);
+
+    // Typed name
+    page.drawText(String(typed_name).slice(0, 100), {
+      x: LEFT, y: nameY, size: 11, font: helv, color: rgb(0.15, 0.10, 0.08)
+    });
+
+    // Drawn signature image (scaled to fit ~200x30)
+    if (sigImg) {
+      const maxW = 260;
+      const maxH = 32;
+      const scale = Math.min(maxW / sigImg.width, maxH / sigImg.height);
+      const w = sigImg.width * scale;
+      const h = sigImg.height * scale;
+      page.drawImage(sigImg, { x: LEFT, y: sigY - 4, width: w, height: h });
+    } else {
+      page.drawText('/s/ ' + typed_name, {
+        x: LEFT, y: sigY, size: 11, font: italic, color: rgb(0.15, 0.10, 0.08)
+      });
+    }
+
+    // Date
+    page.drawText(String(typed_date).slice(0, 40), {
+      x: LEFT, y: dateY, size: 11, font: helv, color: rgb(0.15, 0.10, 0.08)
+    });
+
+    // Email
+    page.drawText(String(email || req.user.email || '').slice(0, 120), {
+      x: LEFT, y: emailY, size: 11, font: helv, color: rgb(0.15, 0.10, 0.08)
+    });
+
+    // NUMA Representative (typed)
+    page.drawText(repName, {
+      x: LEFT, y: repY, size: 11, font: helvBold, color: rgb(0.35, 0.24, 0.16)
+    });
+
+    // Rep signature line - italic script styling of the rep name + date
+    page.drawText(`/s/ ${repName}   —   ${repDate}`, {
+      x: LEFT, y: repSigY, size: 11, font: italic, color: rgb(0.35, 0.24, 0.16)
+    });
+
+    const stampedBytes = await pdfDoc.save();
+    const pdfFilename = `signed-user${req.user.id}-doc${docId}-${Date.now()}.pdf`;
+    const pdfAbs = path.join(SIGNED_DIR, pdfFilename);
+    fs.writeFileSync(pdfAbs, stampedBytes);
+    const pdfUrl = `/uploads/signed/${pdfFilename}`;
+
+    // Upsert the signed_documents row.
+    const upsert = await pool.query(
+      `INSERT INTO signed_documents
+         (user_id, document_id, typed_name, typed_date, signature_image_url, signed_pdf_url,
+          student_email, rep_name, rep_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (user_id, document_id) DO UPDATE
+         SET typed_name = EXCLUDED.typed_name,
+             typed_date = EXCLUDED.typed_date,
+             signature_image_url = EXCLUDED.signature_image_url,
+             signed_pdf_url = EXCLUDED.signed_pdf_url,
+             student_email = EXCLUDED.student_email,
+             rep_name = EXCLUDED.rep_name,
+             rep_date = EXCLUDED.rep_date,
+             signed_at = NOW()
+       RETURNING *`,
+      [req.user.id, docId, typed_name, typed_date, sigUrl, pdfUrl, email || req.user.email || null, repName, repDate]
+    );
+    res.json({ ok: true, signed: upsert.rows[0], signed_pdf_url: pdfUrl });
+  } catch (err) {
+    console.error('required-documents SIGN', err);
+    res.status(500).json({ error: 'Failed to save signature: ' + err.message });
+  }
+});
+
+// Current user's signed documents (for the Account Settings tab).
+app.get('/api/signed-documents', authRequired, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT sd.id, sd.document_id, rd.title, rd.slug, sd.signed_pdf_url, sd.signed_at,
+              sd.typed_name, sd.typed_date
+       FROM signed_documents sd
+       JOIN required_documents rd ON rd.id = sd.document_id
+       WHERE sd.user_id = $1
+       ORDER BY sd.signed_at DESC`,
+      [req.user.id]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('signed-documents GET', err);
+    res.status(500).json({ error: 'Failed to load signed documents' });
+  }
+});
+
+// Admin: every user's signed documents, grouped by user.
+app.get('/api/admin/signed-documents', adminRequired, async (_req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT sd.id, sd.user_id, u.username, u.full_name, u.email AS user_email,
+              sd.document_id, rd.title, rd.slug,
+              sd.typed_name, sd.typed_date, sd.student_email, sd.signature_image_url,
+              sd.signed_pdf_url, sd.rep_name, sd.rep_date, sd.signed_at
+       FROM signed_documents sd
+       JOIN required_documents rd ON rd.id = sd.document_id
+       JOIN users u ON u.id = sd.user_id
+       ORDER BY sd.signed_at DESC`
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('admin signed-documents GET', err);
+    res.status(500).json({ error: 'Failed to load signed documents' });
+  }
+});
+
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/') || req.path.startsWith('/documents/')) return next();
   const indexFile = path.join(PUBLIC_ROOT, 'index.html');
   if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
   next();

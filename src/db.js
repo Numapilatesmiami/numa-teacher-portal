@@ -427,7 +427,51 @@ export async function initDatabase() {
         UNIQUE(section_id, exercise_slug)
       );
       CREATE INDEX IF NOT EXISTS idx_exercise_images_section ON exercise_images(section_id);
+
+      -- Required documents (agreements a student must sign before dashboard access)
+      CREATE TABLE IF NOT EXISTS required_documents (
+        id SERIAL PRIMARY KEY,
+        slug TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        template_path TEXT NOT NULL,
+        required BOOLEAN DEFAULT TRUE,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Signatures - one per (user, document)
+      CREATE TABLE IF NOT EXISTS signed_documents (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        document_id INT NOT NULL REFERENCES required_documents(id) ON DELETE CASCADE,
+        typed_name TEXT NOT NULL,
+        typed_date TEXT NOT NULL,
+        signature_image_url TEXT NOT NULL,
+        signed_pdf_url TEXT,
+        student_email TEXT,
+        rep_signature_url TEXT,
+        rep_name TEXT,
+        rep_date TEXT,
+        signed_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, document_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signed_documents_user ON signed_documents(user_id);
+      CREATE INDEX IF NOT EXISTS idx_signed_documents_document ON signed_documents(document_id);
     `);
+
+    // Seed the enrollment agreement as a required document.
+    await client.query(
+      `INSERT INTO required_documents (slug, title, description, template_path, required, active)
+       VALUES ($1, $2, $3, $4, TRUE, TRUE)
+       ON CONFLICT (slug) DO NOTHING`,
+      [
+        'enrollment-agreement',
+        'Teacher Training Enrollment & Course Use Agreement',
+        'Enrollment, course use, confidentiality, and training agreement. You must read and sign this document before accessing your dashboard.',
+        'documents/enrollment-agreement.pdf'
+      ]
+    );
 
     // Seed default pathway rows for each track (all modules required, hours = global).
     // Stored as one row per track in program_settings under keys 'pathway_mat',
