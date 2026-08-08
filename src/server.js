@@ -2480,6 +2480,23 @@ app.post('/api/admin/upload', adminRequired, (req, res) => {
 // ===== SPA FALLBACK =====
 // Any non-API, non-upload GET that doesn't match a real file gets index.html
 // so the portal's hash routing works on direct visits.
+// Diagnostic: report upload dirs and their contents (admin only).
+app.get('/api/admin/diag/uploads', adminRequired, (_req, res) => {
+  const out = { UPLOAD_ROOT, SIGNED_DIR, exists: {}, listing: {} };
+  try {
+    out.exists.UPLOAD_ROOT = fs.existsSync(UPLOAD_ROOT);
+    out.exists.SIGNED_DIR = fs.existsSync(SIGNED_DIR);
+    out.exists.DATA = fs.existsSync('/data');
+    if (out.exists.UPLOAD_ROOT) {
+      out.listing.UPLOAD_ROOT = fs.readdirSync(UPLOAD_ROOT).slice(0, 40);
+    }
+    if (out.exists.SIGNED_DIR) {
+      out.listing.SIGNED_DIR = fs.readdirSync(SIGNED_DIR).slice(0, 40);
+    }
+  } catch (e) { out.error = String(e); }
+  res.json(out);
+});
+
 // ===== REQUIRED DOCUMENTS (signature workflow) =====
 // Helper: convert a data URL (data:image/png;base64,...) to a Buffer + mimetype.
 function dataUrlToBuffer(dataUrl) {
