@@ -49,18 +49,48 @@ const upload = multer({
   }
 });
 
-// Separate uploader for homework videos: accepts any common video file type, up to 500MB.
+// Separate uploader for module-end homework: accepts videos, PDFs, Word docs, and PowerPoints, up to 500MB.
 const HOMEWORK_MAX_BYTES = 500 * 1024 * 1024;
+const HOMEWORK_ALLOWED_EXTS = [
+  // Video
+  '.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.3gp', '.mpeg', '.mpg', '.qt', '.hevc',
+  // Documents
+  '.pdf',
+  // Word
+  '.doc', '.docx',
+  // PowerPoint
+  '.ppt', '.pptx',
+  // Keynote (Apple)
+  '.key',
+  // OpenDocument
+  '.odt', '.odp',
+  // Rich text / plain text
+  '.rtf', '.txt',
+];
+const HOMEWORK_ALLOWED_MIME_PREFIXES = ['video/'];
+const HOMEWORK_ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.oasis.opendocument.text',
+  'application/vnd.oasis.opendocument.presentation',
+  'application/x-iwork-keynote-sffkey',
+  'application/rtf',
+  'text/plain',
+  'application/octet-stream',
+]);
 const videoUpload = multer({
   storage,
   limits: { fileSize: HOMEWORK_MAX_BYTES },
   fileFilter: (_req, file, cb) => {
     const mt = (file.mimetype || '').toLowerCase();
-    const okMime = mt.startsWith('video/') || mt === 'application/octet-stream';
     const ext = path.extname(file.originalname || '').toLowerCase();
-    const okExt = ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi', '.wmv', '.flv', '.3gp', '.mpeg', '.mpg', '.qt', '.hevc'].includes(ext);
+    const okMime = HOMEWORK_ALLOWED_MIMES.has(mt) || HOMEWORK_ALLOWED_MIME_PREFIXES.some(p => mt.startsWith(p));
+    const okExt = HOMEWORK_ALLOWED_EXTS.includes(ext);
     if (okMime || okExt) cb(null, true);
-    else cb(new Error('Please upload a standard video file (MP4, MOV, WebM, MKV, AVI, etc.)'));
+    else cb(new Error('Please upload a video, PDF, Word doc, or PowerPoint (MP4, MOV, PDF, DOCX, PPTX, etc.)'));
   }
 });
 

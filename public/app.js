@@ -6335,6 +6335,60 @@ function _hwStatusBadge(status) {
 }
 function _hwIsLocked(status) { return status === 'approved' || status === 'needs_revision'; }
 
+// Determine what kind of file a submission is, based on its mime_type or filename.
+function _hwFileKind(sub) {
+  const mt = (sub && sub.mime_type || '').toLowerCase();
+  const name = (sub && sub.original_filename || sub && sub.video_url || '').toLowerCase();
+  if (mt.startsWith('video/')) return 'video';
+  if (mt === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (mt.includes('presentation') || /\.(ppt|pptx|key|odp)$/.test(name)) return 'presentation';
+  if (mt.includes('word') || mt.includes('officedocument.wordprocessing') || /\.(doc|docx|odt|rtf|txt)$/.test(name)) return 'document';
+  // Fall back on extension for octet-stream uploads.
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|wmv|flv|3gp|mpeg|mpg)$/.test(name)) return 'video';
+  return 'file';
+}
+
+// Render an inline preview of a homework submission. Videos play inline;
+// PDFs embed; PowerPoints/Word docs get a clean download card with a giant button.
+function _hwRenderSubmissionPreview(sub) {
+  if (!sub || !sub.video_url) return '';
+  const kind = _hwFileKind(sub);
+  const url = escapeAttr(sub.video_url);
+  const name = escapeHtml(sub.original_filename || 'submission');
+  if (kind === 'video') {
+    return (
+      '<video controls preload="metadata" style="width:100%;max-height:420px;margin-top:10px;border-radius:8px;background:#000;">' +
+        '<source src="' + url + '" type="' + escapeAttr(sub.mime_type || 'video/mp4') + '">' +
+        'Your browser cannot play this video. <a href="' + url + '" target="_blank">Download it.</a>' +
+      '</video>'
+    );
+  }
+  if (kind === 'pdf') {
+    return (
+      '<div style="margin-top:10px;border-radius:8px;overflow:hidden;border:1px solid #e6dfd1;">' +
+        '<iframe src="' + url + '#toolbar=0&view=FitH" style="width:100%;height:520px;border:0;display:block;" title="' + name + '"></iframe>' +
+      '</div>' +
+      '<div style="margin-top:8px;"><a class="btn btn-secondary btn-sm" href="' + url + '" target="_blank" rel="noopener"><i class="fa-solid fa-download"></i> Download PDF</a></div>'
+    );
+  }
+  const iconMap = { presentation: 'fa-file-powerpoint', document: 'fa-file-word', file: 'fa-file' };
+  const colorMap = { presentation: '#c46a4a', document: '#2b579a', file: '#6b5d51' };
+  const labelMap = { presentation: 'PowerPoint', document: 'Word Document', file: 'File' };
+  const icon = iconMap[kind] || 'fa-file';
+  const color = colorMap[kind] || '#6b5d51';
+  const label = labelMap[kind] || 'File';
+  return (
+    '<div style="margin-top:10px;background:#fff;border:1px solid #e6dfd1;border-radius:10px;padding:16px;display:flex;align-items:center;gap:14px;">' +
+      '<div style="font-size:36px;color:' + color + ';flex-shrink:0;"><i class="fa-solid ' + icon + '"></i></div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-weight:600;color:#2b1c11;word-break:break-all;">' + name + '</div>' +
+        '<div class="text-muted text-sm">' + label + '</div>' +
+      '</div>' +
+      '<a class="btn btn-primary btn-sm" href="' + url + '" target="_blank" rel="noopener" download><i class="fa-solid fa-download"></i> Download</a>' +
+    '</div>'
+  );
+}
+
 // ---- STUDENT: fetch & render the homework card on the quiz section ----
 async function loadStudentHomework(moduleId) {
   const data = await apiCall('/api/modules/' + encodeURIComponent(moduleId) + '/homework');
@@ -6362,10 +6416,7 @@ function renderStudentHomeworkCard(moduleId, data) {
           <div><strong>Your submission</strong> &middot; <span class="text-muted text-sm">${new Date(sub.submitted_at).toLocaleString()}</span></div>
           ${_hwStatusBadge(sub.status)}
         </div>
-        <video controls preload="metadata" style="width:100%;max-height:420px;margin-top:10px;border-radius:8px;background:#000;">
-          <source src="${escapeAttr(sub.video_url)}" type="${escapeAttr(sub.mime_type || 'video/mp4')}">
-          Your browser cannot play this video. <a href="${escapeAttr(sub.video_url)}" target="_blank">Download it.</a>
-        </video>
+        ${_hwRenderSubmissionPreview(sub)}
         <div class="text-muted text-sm" style="margin-top:6px;">${escapeHtml(sub.original_filename || '')} &middot; ${_hwFmtBytes(sub.size_bytes)}</div>
         ${sub.student_notes ? `<div style="margin-top:8px;"><em>Your notes:</em> ${escapeHtml(sub.student_notes)}</div>` : ''}
         ${sub.admin_feedback ? `<div style="margin-top:10px;padding:10px;background:#fff;border-left:3px solid #A38D78;border-radius:6px;"><strong>Instructor feedback:</strong><br>${escapeHtml(sub.admin_feedback)}</div>` : ''}
@@ -6379,19 +6430,19 @@ function renderStudentHomeworkCard(moduleId, data) {
       </div>`;
   } else {
     body = `<div style="margin-top:14px;">
-        <input type="file" id="hw-file-${escapeAttr(moduleId)}" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg" style="display:block;margin-bottom:8px;">
+        <input type="file" id="hw-file-${escapeAttr(moduleId)}" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg,.pdf,.doc,.docx,.ppt,.pptx,.key,.odt,.odp,.rtf,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" style="display:block;margin-bottom:8px;">
         <textarea id="hw-notes-${escapeAttr(moduleId)}" rows="2" placeholder="Optional notes for your instructor" class="form-control" style="margin-bottom:8px;"></textarea>
-        <button class="btn btn-primary" onclick="studentUploadHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-upload"></i> Upload Video</button>
+        <button class="btn btn-primary" onclick="studentUploadHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-upload"></i> Upload Assignment</button>
         <div id="hw-progress-${escapeAttr(moduleId)}" class="text-muted text-sm" style="margin-top:8px;"></div>
       </div>`;
   }
   return `
     <div class="card mb-3" style="border-left:4px solid #A38D78;margin-top:24px;">
       <div class="card-body">
-        <h3 style="margin-top:0;"><i class="fa-solid fa-video"></i> Homework ${reqBadge}</h3>
+        <h3 style="margin-top:0;"><i class="fa-solid fa-file-arrow-up"></i> Homework ${reqBadge}</h3>
         ${hw.title ? `<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(hw.title)}</div>` : ''}
         <div style="white-space:pre-wrap;">${escapeHtml(hw.description)}</div>
-        <div class="text-muted text-sm" style="margin-top:8px;">Upload any standard video file (MP4, MOV, WebM, MKV, etc.) up to ${maxMb} MB.</div>
+        <div class="text-muted text-sm" style="margin-top:8px;">Upload a <strong>video</strong> (MP4, MOV, WebM, MKV), <strong>PDF</strong>, <strong>Word doc</strong> (.doc, .docx), or <strong>PowerPoint</strong> (.ppt, .pptx) &mdash; up to ${maxMb} MB.</div>
         ${body}
       </div>
     </div>
@@ -6708,10 +6759,7 @@ function renderAdminSubmissionRow(s) {
         </div>
         ${_hwStatusBadge(s.status)}
       </div>
-      <video controls preload="metadata" style="width:100%;max-height:480px;margin-top:10px;border-radius:8px;background:#000;">
-        <source src="${escapeAttr(s.video_url)}" type="${escapeAttr(s.mime_type || 'video/mp4')}">
-        Cannot play this video. <a href="${escapeAttr(s.video_url)}" target="_blank">Download it.</a>
-      </video>
+      ${_hwRenderSubmissionPreview(s)}
       <div class="text-muted text-sm" style="margin-top:6px;">${escapeHtml(s.original_filename || '')} &middot; ${_hwFmtBytes(s.size_bytes)} &middot; <a href="${escapeAttr(s.video_url)}" target="_blank">open in new tab</a></div>
       ${s.student_notes ? `<div style="margin-top:8px;"><em>Student notes:</em> ${escapeHtml(s.student_notes)}</div>` : ''}
       <div style="margin-top:12px;border-top:1px dashed #d8cdb8;padding-top:12px;">
