@@ -937,30 +937,8 @@ function renderHourTabContent(type) {
   const user = APP.currentUser;
   const entries = (user.hourLogs && user.hourLogs[type]) || [];
 
-  // Disclaimers by tab — brand-aligned, calm and informative
-  let disclaimer = '';
-  if (type === 'observation') {
-    disclaimer = `
-      <div class="hour-disclaimer">
-        <i class="fa-solid fa-circle-info"></i>
-        <div><strong>Observation hours must be completed with a NUMA Pilates instructor.</strong> Hours observed at other studios will not count toward your certification.</div>
-      </div>`;
-  } else if (type === 'teaching') {
-    disclaimer = `
-      <div class="hour-disclaimer">
-        <i class="fa-solid fa-circle-info"></i>
-        <div><strong>Teaching practicum hours must be supervised by a NUMA Pilates instructor and completed at NUMA Pilates.</strong> Teaching done outside of NUMA will not count toward your certification.</div>
-      </div>`;
-  } else if (type === 'personal') {
-    disclaimer = `
-      <div class="hour-disclaimer">
-        <i class="fa-solid fa-circle-info"></i>
-        <div>
-          <strong>Practice hours</strong> count for classes taken at NUMA or with any comprehensive-certified instructor. You may ask instructors at other studios for their certification credentials at any time, and NUMA teachers may request verification before signing off on hours that qualify.<br><br>
-          <em>When in doubt, use your 10 free classes at NUMA Pilates.</em>
-        </div>
-      </div>`;
-  }
+  // Disclaimers removed per admin request.
+  const disclaimer = '';
 
   const fields = type === 'observation' ?
     `<div class="form-row">
