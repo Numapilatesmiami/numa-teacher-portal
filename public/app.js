@@ -6380,51 +6380,59 @@ async function loadStudentHomework(moduleId) {
 function renderStudentHomeworkCard(moduleId, data) {
   if (!data || !data.homework) return '';
   const hw = data.homework;
-  const sub = data.submission;
-  const maxMb = hw.max_size_mb || 500;
   const reqBadge = hw.is_required
     ? '<span style="background:#fce4ec;color:#ad1457;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;margin-left:8px;">Required</span>'
     : '<span style="background:#f3e5f5;color:#6a1b9a;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;margin-left:8px;">Optional</span>';
-  let body = '';
-  if (sub) {
-    const locked = _hwIsLocked(sub.status);
-    body = `
-      <div style="background:#fafaf7;border:1px solid #e6dfd1;border-radius:10px;padding:14px;margin-top:14px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-          <div><strong>Your submission</strong> &middot; <span class="text-muted text-sm">${new Date(sub.submitted_at).toLocaleString()}</span></div>
-          ${_hwStatusBadge(sub.status)}
+
+  const subjectLine = (hw.title ? hw.title : ('Module ' + moduleId + ' Assignment'));
+  const mailto = 'mailto:education@numapilatesmiami.com'
+    + '?subject=' + encodeURIComponent('[Assignment] ' + subjectLine)
+    + '&body='    + encodeURIComponent(
+        'Hi NUMA Education Team,\n\n'
+      + 'Please find my assignment for: ' + subjectLine + '.\n\n'
+      + 'Student name: \n'
+      + 'Module: ' + moduleId + '\n'
+      + 'Notes for my instructor:\n\n'
+      + '[Attach your file(s) here \u2014 video, PDF, Word doc, or PowerPoint.]\n\nThank you.'
+    );
+
+  const emailPanel = `
+    <div style="margin-top:16px;background:#fbf7f2;border:1px solid #eadfd6;border-radius:12px;padding:18px 20px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+        <i class="fa-solid fa-envelope-open-text" style="color:#A38D78;font-size:18px;"></i>
+        <strong style="font-size:15px;color:#5a4738;">Submit this assignment by email</strong>
+      </div>
+      <p style="margin:6px 0 12px 0;color:#5a4738;line-height:1.55;">
+        Please send your completed assignment (video, PDF, Word doc, or PowerPoint) as an email attachment to the address below.
+        Your instructor will review it and reply directly.
+      </p>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border:1px solid #eadfd6;border-radius:10px;padding:12px 14px;">
+        <div>
+          <div class="text-muted text-sm" style="letter-spacing:.5px;text-transform:uppercase;font-size:11px;">Send to</div>
+          <div style="font-weight:600;font-size:15px;color:#3a2c22;">education@numapilatesmiami.com</div>
         </div>
-        ${_hwRenderSubmissionPreview(sub)}
-        <div class="text-muted text-sm" style="margin-top:6px;">${escapeHtml(sub.original_filename || '')} &middot; ${_hwFmtBytes(sub.size_bytes)}</div>
-        ${sub.student_notes ? `<div style="margin-top:8px;"><em>Your notes:</em> ${escapeHtml(sub.student_notes)}</div>` : ''}
-        ${sub.admin_feedback ? `<div style="margin-top:10px;padding:10px;background:#fff;border-left:3px solid #A38D78;border-radius:6px;"><strong>Instructor feedback:</strong><br>${escapeHtml(sub.admin_feedback)}</div>` : ''}
-        <div id="hw-comments-${sub.id}" style="margin-top:12px;"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-          ${locked
-            ? '<span class="text-muted text-sm"><i class="fa-solid fa-lock"></i> This submission has been graded. The video is locked, but you can still read instructor comments.</span>'
-            : `<button class="btn btn-secondary btn-sm" onclick="studentChangeHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-rotate"></i> Replace Video</button>
-               <button class="btn btn-secondary btn-sm" onclick="studentDeleteHomework('${escapeAttr(moduleId)}')" style="color:#c62828;border-color:#c62828;"><i class="fa-solid fa-trash"></i> Delete Submission</button>`}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <a class="btn btn-primary btn-sm" href="${escapeAttr(mailto)}" style="background:#A38D78;border-color:#A38D78;"><i class="fa-solid fa-paper-plane"></i> Open Email Draft</a>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText('education@numapilatesmiami.com').then(function(){var t=this;},function(){});this.innerHTML='<i class=\\'fa-solid fa-check\\'></i> Copied';setTimeout(function(){}, 1500);"><i class="fa-solid fa-copy"></i> Copy Address</button>
         </div>
-      </div>`;
-  } else {
-    body = `<div style="margin-top:14px;">
-        <input type="file" id="hw-file-${escapeAttr(moduleId)}" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg,.pdf,.doc,.docx,.ppt,.pptx,.key,.odt,.odp,.rtf,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" style="display:block;margin-bottom:8px;">
-        <textarea id="hw-notes-${escapeAttr(moduleId)}" rows="2" placeholder="Optional notes for your instructor" class="form-control" style="margin-bottom:8px;"></textarea>
-        <button class="btn btn-primary" onclick="studentUploadHomework('${escapeAttr(moduleId)}')"><i class="fa-solid fa-upload"></i> Upload Assignment</button>
-        <div id="hw-progress-${escapeAttr(moduleId)}" class="text-muted text-sm" style="margin-top:8px;"></div>
-      </div>`;
-  }
+      </div>
+      <ul style="margin:14px 0 0 20px;padding:0;color:#5a4738;line-height:1.6;font-size:14px;">
+        <li>Use the subject line: <strong>[Assignment] ${escapeHtml(subjectLine)}</strong></li>
+        <li>Include your <strong>full name</strong> in the body of the email.</li>
+        <li>Attach your file(s) directly \u2014 do not send links to personal cloud storage.</li>
+        <li>You will receive a confirmation and grade feedback from your instructor by email.</li>
+      </ul>
+    </div>`;
+
   return `
     <div class="card mb-3" style="border-left:4px solid #A38D78;margin-top:24px;">
       <div class="card-body">
         <h3 style="margin-top:0;"><i class="fa-solid fa-file-arrow-up"></i> Homework ${reqBadge}</h3>
         ${hw.title ? `<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(hw.title)}</div>` : ''}
         <div style="white-space:pre-wrap;">${escapeHtml(hw.description)}</div>
-        <div class="text-muted text-sm" style="margin-top:8px;">Upload a <strong>video</strong> (MP4, MOV, WebM, MKV), <strong>PDF</strong>, <strong>Word doc</strong> (.doc, .docx), or <strong>PowerPoint</strong> (.ppt, .pptx) &mdash; up to ${maxMb} MB.</div>
-        ${body}
+        ${emailPanel}
       </div>
-    </div>
-    <script>setTimeout(function(){ if (window.renderHomeworkCommentsThread) renderHomeworkCommentsThread(${sub ? sub.id : 'null'}); }, 0);</script>`;
+    </div>`;
 }
 
 async function studentUploadHomework(moduleId) {
