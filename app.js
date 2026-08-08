@@ -9372,6 +9372,14 @@ async function loadAdminHomeworkInbox() {
   // Also fire once on load
   setTimeout(() => { NS.checkAndBlock().catch(()=>{}); }, 800);
 
+  // ---------- Helper: append ?token= so <a target=_blank> can auth ----------
+  function _appendToken(url) {
+    if (!url) return url;
+    const tok = localStorage.getItem('numa_token');
+    if (!tok) return url;
+    return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+  }
+
   // ---------- Account Settings > Signed Documents list ----------
   async function _populateAccountList() {
     const target = document.getElementById('acct-signed-docs');
@@ -9392,8 +9400,8 @@ async function loadAdminHomeworkInbox() {
             '</div>' +
             '<div>' +
               (r.signed_pdf_url
-                ? '<a class="btn btn-secondary btn-sm" href="' + escapeAttr(r.signed_pdf_url) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View PDF</a>'
-                : '<span class="text-muted">PDF unavailable</span>') +
+                ? '<a class="btn btn-secondary btn-sm" href="' + escapeAttr(_appendToken(r.signed_pdf_url)) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View PDF</a>'
+                : '<span class="text-muted">PDF unavailable — please re-sign</span>') +
             '</div>' +
           '</div>'
         );
@@ -9478,7 +9486,7 @@ async function loadAdminHomeworkInbox() {
               '<td>' + escapeHtml(r.title || '') + '</td>' +
               '<td>' +
                 (r.signed_pdf_url
-                  ? '<a class="btn btn-sm btn-secondary" href="' + escapeAttr(r.signed_pdf_url) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View</a>'
+                  ? '<a class="btn btn-sm btn-secondary" href="' + escapeAttr(_appendToken(r.signed_pdf_url)) + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> View</a>'
                   : '<span class="text-muted">\u2014</span>') +
               '</td>' +
             '</tr>'

@@ -449,6 +449,8 @@ export async function initDatabase() {
         typed_date TEXT NOT NULL,
         signature_image_url TEXT NOT NULL,
         signed_pdf_url TEXT,
+        signed_pdf_bytes BYTEA,
+        signature_image_bytes BYTEA,
         student_email TEXT,
         rep_signature_url TEXT,
         rep_name TEXT,
@@ -456,6 +458,9 @@ export async function initDatabase() {
         signed_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(user_id, document_id)
       );
+      -- Add BYTEA columns if the table already exists from an earlier deploy.
+      ALTER TABLE signed_documents ADD COLUMN IF NOT EXISTS signed_pdf_bytes BYTEA;
+      ALTER TABLE signed_documents ADD COLUMN IF NOT EXISTS signature_image_bytes BYTEA;
       CREATE INDEX IF NOT EXISTS idx_signed_documents_user ON signed_documents(user_id);
       CREATE INDEX IF NOT EXISTS idx_signed_documents_document ON signed_documents(document_id);
     `);

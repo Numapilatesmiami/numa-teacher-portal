@@ -2480,23 +2480,6 @@ app.post('/api/admin/upload', adminRequired, (req, res) => {
 // ===== SPA FALLBACK =====
 // Any non-API, non-upload GET that doesn't match a real file gets index.html
 // so the portal's hash routing works on direct visits.
-// Diagnostic: report upload dirs and their contents (admin only).
-app.get('/api/admin/diag/uploads', adminRequired, (_req, res) => {
-  const out = { UPLOAD_ROOT, SIGNED_DIR, exists: {}, listing: {} };
-  try {
-    out.exists.UPLOAD_ROOT = fs.existsSync(UPLOAD_ROOT);
-    out.exists.SIGNED_DIR = fs.existsSync(SIGNED_DIR);
-    out.exists.DATA = fs.existsSync('/data');
-    if (out.exists.UPLOAD_ROOT) {
-      out.listing.UPLOAD_ROOT = fs.readdirSync(UPLOAD_ROOT).slice(0, 40);
-    }
-    if (out.exists.SIGNED_DIR) {
-      out.listing.SIGNED_DIR = fs.readdirSync(SIGNED_DIR).slice(0, 40);
-    }
-  } catch (e) { out.error = String(e); }
-  res.json(out);
-});
-
 // ===== REQUIRED DOCUMENTS (signature workflow) =====
 // Helper: convert a data URL (data:image/png;base64,...) to a Buffer + mimetype.
 function dataUrlToBuffer(dataUrl) {
@@ -2505,15 +2488,15 @@ function dataUrlToBuffer(dataUrl) {
   return { mime: m[1], buffer: Buffer.from(m[2], 'base64') };
 }
 
-// Save a data URL PNG into /uploads/signed/ and return the public URL.
+// Save a data URL PNG into /uploads/signed/ and return { url, buffer, filename }.
 function saveSignaturePng(dataUrl, prefix) {
   const parsed = dataUrlToBuffer(dataUrl);
   if (!parsed) return null;
   const ext = parsed.mime.includes('png') ? '.png' : (parsed.mime.includes('jpeg') || parsed.mime.includes('jpg') ? '.jpg' : '.png');
   const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
   const abs = path.join(SIGNED_DIR, filename);
-  fs.writeFileSync(abs, parsed.buffer);
-  return `/uploads/signed/${filename}`;
+  try { fs.writeFileSync(abs, parsed.buffer); } catch (_) { /* disk may be ephemeral; DB copy is authoritative */ }
+  return { url: `/uploads/signed/${filename}`, buffer: parsed.buffer, filename };
 }
 
 // Return the list of required documents and, for each, whether the current user has signed it.
@@ -2526,24 +2509,30 @@ app.get('/api/required-documents', authRequired, async (req, res) => {
        ORDER BY id`
     );
     const signed = await pool.query(
-      `SELECT document_id, signed_pdf_url, signed_at
+      `SELECT id, document_id, signed_at, (signed_pdf_bytes IS NOT NULL) AS has_pdf
        FROM signed_documents
        WHERE user_id = $1`,
       [req.user.id]
     );
     const signedMap = {};
     for (const s of signed.rows) signedMap[s.document_id] = s;
-    const rows = docs.rows.map((d) => ({
-      id: d.id,
-      slug: d.slug,
-      title: d.title,
-      description: d.description,
-      template_url: '/' + d.template_path.replace(/^\/+/, ''),
-      required: d.required,
-      signed: !!signedMap[d.id],
-      signed_pdf_url: signedMap[d.id] ? signedMap[d.id].signed_pdf_url : null,
-      signed_at: signedMap[d.id] ? signedMap[d.id].signed_at : null,
-    }));
+    const rows = docs.rows.map((d) => {
+      const sig = signedMap[d.id];
+      // Treat rows without a stored PDF as unsigned so the student is re-prompted
+      // (their earlier signature file was wiped by an ephemeral disk).
+      const isSigned = !!(sig && sig.has_pdf);
+      return {
+        id: d.id,
+        slug: d.slug,
+        title: d.title,
+        description: d.description,
+        template_url: '/' + d.template_path.replace(/^\/+/, ''),
+        required: d.required,
+        signed: isSigned,
+        signed_pdf_url: isSigned ? `/api/signed-documents/${sig.id}/pdf` : null,
+        signed_at: isSigned ? sig.signed_at : null,
+      };
+    });
     res.json(rows);
   } catch (err) {
     console.error('required-documents GET', err);
@@ -2563,9 +2552,11 @@ app.post('/api/required-documents/:id/sign', authRequired, async (req, res) => {
     if (docRow.rows.length === 0) return res.status(404).json({ error: 'Document not found.' });
     const doc = docRow.rows[0];
 
-    // Save the student's drawn signature as a PNG file.
-    const sigUrl = saveSignaturePng(signature_data_url, `sig-user${req.user.id}-doc${docId}`);
-    if (!sigUrl) return res.status(400).json({ error: 'Signature image is invalid.' });
+    // Save the student's drawn signature as a PNG file (and keep the buffer for DB storage).
+    const sig = saveSignaturePng(signature_data_url, `sig-user${req.user.id}-doc${docId}`);
+    if (!sig) return res.status(400).json({ error: 'Signature image is invalid.' });
+    const sigUrl = sig.url;
+    const sigBuffer = sig.buffer;
 
     // Auto-generate a NUMA representative signature (typed script-style rendering into a PNG).
     // We render server-side via pdf-lib text on the PDF; no separate image file needed for the rep.
@@ -2651,17 +2642,19 @@ app.post('/api/required-documents/:id/sign', authRequired, async (req, res) => {
     });
 
     const stampedBytes = await pdfDoc.save();
+    const pdfBuffer = Buffer.from(stampedBytes);
     const pdfFilename = `signed-user${req.user.id}-doc${docId}-${Date.now()}.pdf`;
     const pdfAbs = path.join(SIGNED_DIR, pdfFilename);
-    fs.writeFileSync(pdfAbs, stampedBytes);
+    try { fs.writeFileSync(pdfAbs, pdfBuffer); } catch (_) { /* disk may be ephemeral; DB copy is authoritative */ }
     const pdfUrl = `/uploads/signed/${pdfFilename}`;
 
-    // Upsert the signed_documents row.
+    // Upsert the signed_documents row. We store the PDF and signature bytes in the
+    // DB so they survive redeploys even without a persistent volume.
     const upsert = await pool.query(
       `INSERT INTO signed_documents
          (user_id, document_id, typed_name, typed_date, signature_image_url, signed_pdf_url,
-          student_email, rep_name, rep_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          student_email, rep_name, rep_date, signed_pdf_bytes, signature_image_bytes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (user_id, document_id) DO UPDATE
          SET typed_name = EXCLUDED.typed_name,
              typed_date = EXCLUDED.typed_date,
@@ -2670,11 +2663,15 @@ app.post('/api/required-documents/:id/sign', authRequired, async (req, res) => {
              student_email = EXCLUDED.student_email,
              rep_name = EXCLUDED.rep_name,
              rep_date = EXCLUDED.rep_date,
+             signed_pdf_bytes = EXCLUDED.signed_pdf_bytes,
+             signature_image_bytes = EXCLUDED.signature_image_bytes,
              signed_at = NOW()
-       RETURNING *`,
-      [req.user.id, docId, typed_name, typed_date, sigUrl, pdfUrl, email || req.user.email || null, repName, repDate]
+       RETURNING id, user_id, document_id, typed_name, typed_date, signature_image_url,
+                 signed_pdf_url, student_email, rep_name, rep_date, signed_at`,
+      [req.user.id, docId, typed_name, typed_date, sigUrl, pdfUrl,
+       email || req.user.email || null, repName, repDate, pdfBuffer, sigBuffer]
     );
-    res.json({ ok: true, signed: upsert.rows[0], signed_pdf_url: pdfUrl });
+    res.json({ ok: true, signed: upsert.rows[0], signed_pdf_url: `/api/signed-documents/${upsert.rows[0].id}/pdf` });
   } catch (err) {
     console.error('required-documents SIGN', err);
     res.status(500).json({ error: 'Failed to save signature: ' + err.message });
@@ -2685,18 +2682,69 @@ app.post('/api/required-documents/:id/sign', authRequired, async (req, res) => {
 app.get('/api/signed-documents', authRequired, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT sd.id, sd.document_id, rd.title, rd.slug, sd.signed_pdf_url, sd.signed_at,
-              sd.typed_name, sd.typed_date
+      `SELECT sd.id, sd.document_id, rd.title, rd.slug, sd.signed_at,
+              sd.typed_name, sd.typed_date,
+              (sd.signed_pdf_bytes IS NOT NULL) AS has_pdf
        FROM signed_documents sd
        JOIN required_documents rd ON rd.id = sd.document_id
        WHERE sd.user_id = $1
        ORDER BY sd.signed_at DESC`,
       [req.user.id]
     );
-    res.json(r.rows);
+    const rows = r.rows.map(row => ({
+      ...row,
+      signed_pdf_url: row.has_pdf ? `/api/signed-documents/${row.id}/pdf` : null,
+    }));
+    res.json(rows);
   } catch (err) {
     console.error('signed-documents GET', err);
     res.status(500).json({ error: 'Failed to load signed documents' });
+  }
+});
+
+// Stream the signed PDF from the database.
+// Owner (matching user_id) OR staff/admin may fetch.
+// Accepts either the Authorization header OR ?token= query param (so <iframe>/<a target=_blank> work).
+app.get('/api/signed-documents/:id/pdf', (req, res, next) => {
+  const headerToken = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7) : null;
+  const token = headerToken || req.query.token;
+  if (!token) return res.status(401).json({ error: 'No token' });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const r = await pool.query(
+      `SELECT sd.user_id, sd.signed_pdf_bytes, rd.slug, sd.typed_name
+         FROM signed_documents sd
+         JOIN required_documents rd ON rd.id = sd.document_id
+         WHERE sd.id = $1`,
+      [id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const row = r.rows[0];
+    const isOwner = row.user_id === req.user.id;
+    const isStaff = req.user.role === 'admin' || req.user.role === 'staff' || req.user.role === 'teacher';
+    if (!isOwner && !isStaff) return res.status(403).json({ error: 'Forbidden' });
+    if (!row.signed_pdf_bytes) {
+      return res.status(410).json({
+        error: 'PDF unavailable',
+        detail: 'This document was signed before the portal stored PDFs in the database. Please re-sign to regenerate it.'
+      });
+    }
+    const safeName = (row.typed_name || 'signed').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${row.slug || 'agreement'}-${safeName}.pdf"`);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.end(row.signed_pdf_bytes);
+  } catch (err) {
+    console.error('signed-documents PDF stream', err);
+    res.status(500).json({ error: 'Failed to load PDF' });
   }
 });
 
@@ -2707,13 +2755,18 @@ app.get('/api/admin/signed-documents', adminRequired, async (_req, res) => {
       `SELECT sd.id, sd.user_id, u.username, u.full_name, u.email AS user_email,
               sd.document_id, rd.title, rd.slug,
               sd.typed_name, sd.typed_date, sd.student_email, sd.signature_image_url,
-              sd.signed_pdf_url, sd.rep_name, sd.rep_date, sd.signed_at
+              sd.rep_name, sd.rep_date, sd.signed_at,
+              (sd.signed_pdf_bytes IS NOT NULL) AS has_pdf
        FROM signed_documents sd
        JOIN required_documents rd ON rd.id = sd.document_id
        JOIN users u ON u.id = sd.user_id
        ORDER BY sd.signed_at DESC`
     );
-    res.json(r.rows);
+    const rows = r.rows.map(row => ({
+      ...row,
+      signed_pdf_url: row.has_pdf ? `/api/signed-documents/${row.id}/pdf` : null,
+    }));
+    res.json(rows);
   } catch (err) {
     console.error('admin signed-documents GET', err);
     res.status(500).json({ error: 'Failed to load signed documents' });
