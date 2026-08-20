@@ -633,67 +633,33 @@ const COURSE_MODULES = [
     sections: [
       {
         id: "4-1",
-        title: "Reformer Anatomy & Safety",
-        content: `<div class="section-image"><img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?w=800&h=400&fit=crop" alt="Reformer Pilates exercise" loading="lazy"><p class="image-caption">The Reformer — Joseph Pilates' signature apparatus, combining spring resistance with a sliding carriage system.</p></div>
-<h2>The Reformer — Apparatus Anatomy</h2>
-<p>The Reformer is Joseph Pilates' signature piece of apparatus — a spring-resistance sliding carriage system.</p>
-
-<h3>Key Components</h3>
-<table>
-<tr><th>Part</th><th>Description</th><th>Function</th></tr>
-<tr><td><strong>Carriage</strong></td><td>Sliding platform on rails</td><td>Moves back and forth; client lies/sits/kneels/stands on it</td></tr>
-<tr><td><strong>Footbar</strong></td><td>Padded bar at one end</td><td>Push/pull point for feet or hands</td></tr>
-<tr><td><strong>Springs</strong></td><td>4–5 springs of varying resistance</td><td>Provide resistance; color-coded</td></tr>
-<tr><td><strong>Straps/Ropes</strong></td><td>Attached to carriage via pulleys</td><td>Hand/foot loops for upper/lower body work</td></tr>
-<tr><td><strong>Shoulder Rests</strong></td><td>Padded blocks near headrest</td><td>Prevent sliding; provide grip for inversions</td></tr>
-<tr><td><strong>Headrest</strong></td><td>Adjustable pad</td><td>Up for flexion exercises; flat for extension/neutral</td></tr>
-<tr><td><strong>Box</strong></td><td>Padded box placed on carriage</td><td>Long box or short box position for exercises</td></tr>
-</table>
-
-<h3>Spring Settings</h3>
-<table>
-<tr><th>Color</th><th>Resistance</th><th>Typical Use</th></tr>
-<tr><td><strong>Red (H)</strong></td><td>Heavy</td><td>Footwork, standing exercises</td></tr>
-<tr><td><strong>Blue/Green (M)</strong></td><td>Medium</td><td>Arm work, core exercises</td></tr>
-<tr><td><strong>Yellow (L)</strong></td><td>Light</td><td>Feet in straps, long box</td></tr>
-</table>
-<p><em>Classical Gratz reformers use one spring weight. Contemporary machines use color-coded springs.</em></p>
-
-<h3>Safety Protocols</h3>
-<ul>
-<li>Always check spring attachment before starting</li>
-<li>Never step on the carriage without springs engaged</li>
-<li>When mounting/dismounting, ensure carriage is stable</li>
-<li>Adjust headrest appropriately (up for flexion, down for supine/extension)</li>
-<li>Spot clients during inversions and advanced exercises</li>
-<li>Communicate spring changes clearly</li>
-<li>Watch for pinch points between carriage and frame</li>
-</ul>`
+        title: "Reformer Anatomy, Safety & History",
+        content: generateReformerAnatomyContent()
       },
       {
         id: "4-2",
-        title: "Supine Exercises",
-        content: generateReformerSupineContent()
+        title: "Reformer Level 1 — Foundation",
+        content: generateReformerLevel1Content()
       },
       {
         id: "4-3",
-        title: "Long Box & Short Box Exercises",
-        content: generateReformerBoxContent()
+        title: "Reformer 1.5 — Intermediate",
+        content: generateReformerLevel15Content()
       },
       {
         id: "4-4",
-        title: "Kneeling & Standing Exercises",
-        content: generateReformerKneelingStandingContent()
+        title: "Advanced Reformer 2.0",
+        content: generateReformerLevel2Content()
       },
       {
         id: "4-5",
-        title: "Three Example Class Flows",
-        content: generateClassFlowsContent()
+        title: "Jumpboard",
+        content: generateReformerJumpboardContent()
       },
       {
         id: "4-6",
-        title: "Advanced & Additional Reformer Exercises",
-        content: generateReformerAdvancedContent()
+        title: "Three Example Class Flows",
+        content: generateClassFlowsContent()
       },
       {
         id: "4-quiz",
@@ -1428,329 +1394,1148 @@ function generateOverballContent() {
 <div class="exercise-card"><h4>21. Prone Inner Thigh Squeeze</h4><p>Ball between ankles. Straighten legs, point feet, squeeze. Hold 10 counts.</p></div>`;
 }
 
-function generateReformerSupineContent() {
-  return `<h2>Reformer — Supine Position Exercises</h2>
+// ============================================================================
+// REFORMER MODULE — 6-SECTION REBUILD (NUMA voice, no photos)
+// Written from PIA-Reformer-301 material + Classical Pilatesology sequence
+// Paraphrased in NUMA's own words. No images.
+// ============================================================================
 
-<div class="exercise-card">
-<h4>1. Footwork Series (4 springs)</h4>
-<p>The classical opening sequence; performed with feet on footbar.</p>
-<table>
-<tr><th>Variation</th><th>Foot Position</th><th>Primary Muscles</th></tr>
-<tr><td><strong>Toes</strong></td><td>Balls of feet, Pilates stance</td><td>Quadriceps, calves</td></tr>
-<tr><td><strong>Arches</strong></td><td>Arches on bar, parallel</td><td>Quadriceps, peroneals, intrinsic foot</td></tr>
-<tr><td><strong>Heels</strong></td><td>Heels on bar, toes flexed</td><td>Quadriceps, hamstrings, glutes</td></tr>
-<tr><td><strong>Tendon Stretch</strong></td><td>Balls of feet; rise/lower heels</td><td>Gastrocnemius, soleus</td></tr>
+function _nX(ex) {
+  const badgeClass = ex.badge === 'contemporary' ? 'badge-contemporary' : 'badge-classical';
+  const badgeText = ex.badge === 'contemporary' ? 'Contemporary' : 'Classical';
+  return `<div class="exercise-card">
+<h4>${ex.name} <span class="${badgeClass}">${badgeText}</span></h4>
+<table class="exercise-table">
+<tr><th>Purpose</th><td>${ex.purpose}</td></tr>
+<tr><th>Hand/Foot Placement</th><td>${ex.placement}</td></tr>
+<tr><th>Setup</th><td>${ex.setup}</td></tr>
+<tr><th>Cue</th><td>${ex.cue}</td></tr>
+<tr><th>Muscle Focus</th><td>${ex.muscles}</td></tr>
+<tr><th>Modifications &amp; Variations</th><td>${ex.mods}</td></tr>
 </table>
-<p><strong>Common errors:</strong> Pelvis lifting, back arching, knees tracking inward, gripping toes</p>
-</div>
-
-<div class="exercise-card">
-<h4>2. Hundred on Reformer (3–4 springs)</h4>
-<p>Same as mat; supine with legs extended or tabletop. Arms pump by sides.</p>
-<p><strong>Primary:</strong> Rectus abdominis, TVA, hip flexors</p>
-</div>
-
-<div class="exercise-card">
-<h4>3. Overhead / Jackknife (2–3 springs)</h4>
-<p>Feet in straps. Roll over to hips-overhead, jackknife legs to vertical, roll down.</p>
-<p><strong>Primary:</strong> Abdominals, hip flexors, spinal flexors</p>
-</div>
-
-<div class="exercise-card">
-<h4>4. Coordination (2 springs)</h4>
-<p>Straps in hands. Extend arms → extend legs → open legs → close → bend knees → return arms.</p>
-<p><strong>Purpose:</strong> Full-body coordination; tests abdominal stability under limb movement</p>
-</div>
-
-<div class="exercise-card">
-<h4>5. Rowing Series (1–2 springs)</h4>
-<p>Seated facing footbar or facing away, hands in straps.</p>
-<table>
-<tr><th>Variation</th><th>Description</th></tr>
-<tr><td>Rowing Front 1</td><td>From chest, round forward, open to T</td></tr>
-<tr><td>Rowing Front 2</td><td>From hips, arms sweep forward-up</td></tr>
-<tr><td>Rowing Back 1</td><td>Face away; shave up back of head</td></tr>
-<tr><td>Rowing Back 2</td><td>From hips, arms sweep back</td></tr>
-<tr><td>Hug a Tree</td><td>Arms draw together (chest fly)</td></tr>
-<tr><td>Shave</td><td>Elbows wide, pull to back of head</td></tr>
-</table>
-</div>
-
-<div class="exercise-card">
-<h4>6. Feet in Straps Series (1–2 springs)</h4>
-<table>
-<tr><th>Exercise</th><th>Movement</th><th>Primary Muscles</th></tr>
-<tr><td><strong>Frogs</strong></td><td>Bend/extend knees; feet together</td><td>Hip flexors/extensors, adductors</td></tr>
-<tr><td><strong>Leg Circles</strong></td><td>Circle legs in hip socket</td><td>Hip rotators, abductors, adductors</td></tr>
-<tr><td><strong>Long Spine Massage</strong></td><td>Legs parallel; rollover with open/close</td><td>Deep abdominals, spinal erectors</td></tr>
-<tr><td><strong>Short Spine Massage</strong></td><td>Rollover with bent knees; articulate down</td><td>Spinal flexors, hamstrings</td></tr>
-</table>
-</div>
-
-<div class="exercise-card">
-<h4>7. Semi-Circle (2 springs)</h4>
-<p>Heels on footbar, hands grip shoulder rests. Lift hips, push carriage out, lower hips, pull in, reverse.</p>
-<p><strong>Purpose:</strong> Bridge-to-extension integration; spinal articulation; hip flexor stretch</p>
 </div>`;
 }
 
-function generateReformerBoxContent() {
-  return `<h2>Reformer — Long Box Exercises</h2>
-
-<h3>Long Box — Prone (1 spring light)</h3>
-<div class="exercise-card"><h4>Swan on Box</h4><p>Hands on rails or footbar. Press up into back extension. <strong>Primary:</strong> Spinal extensors, glutes</p></div>
-<div class="exercise-card"><h4>Pull Straps 1</h4><p>Arms pull straight back along sides. <strong>Primary:</strong> Posterior deltoid, rhomboids, middle trapezius</p></div>
-<div class="exercise-card"><h4>T Pull Straps / Pull Straps 2</h4><p>Arms pull to T-position. <strong>Primary:</strong> Lower/mid trapezius, rhomboids</p></div>
-<div class="exercise-card"><h4>Breaststroke</h4><p>Hands in straps; circle arms from overhead to sides. <strong>Primary:</strong> Posterior chain, pecs</p></div>
-<div class="exercise-card"><h4>Grasshopper</h4><p>Legs in straps; kick heels to seat alternating or together. <strong>Primary:</strong> Hamstrings, glutes</p></div>
-<div class="exercise-card"><h4>Swimming on Box</h4><p>Legs in straps; alternating arm-leg flutter. <strong>Primary:</strong> Full posterior chain</p></div>
-
-<h3>Long Box — Supine (1–2 springs)</h3>
-<div class="exercise-card"><h4>Backstroke</h4><p>Hands in straps; arms start overhead; circle open, down, together. <strong>Primary:</strong> Chest, anterior deltoids, core</p></div>
-<div class="exercise-card"><h4>Teaser on Box</h4><p>Hands in straps; roll up to Teaser, lower back. <strong>Primary:</strong> Abdominals, hip flexors</p></div>
-
-<h2>Reformer — Short Box Exercises</h2>
-<p>Box placed widthwise (short); feet hooked under strap.</p>
-<div class="exercise-card"><h4>Short Box — Round</h4><p>Round over legs, roll back with C-curve. <strong>Primary:</strong> Abdominals, spinal flexors</p></div>
-<div class="exercise-card"><h4>Short Box — Flat Back</h4><p>Lean back with flat spine. <strong>Primary:</strong> Spinal extensors, hip flexors, abdominals</p></div>
-<div class="exercise-card"><h4>Short Box — Side to Side</h4><p>Lean back flat, reach side to side. <strong>Primary:</strong> Obliques, lateral trunk</p></div>
-<div class="exercise-card"><h4>Short Box — Twist</h4><p>Rotate torso while leaning back. <strong>Primary:</strong> Obliques, spinal rotators</p></div>
-<div class="exercise-card"><h4>Short Box — Around the World</h4><p>Combination rotation + side bend. <strong>Primary:</strong> Full trunk musculature</p></div>
-<div class="exercise-card"><h4>Short Box — Tree</h4><p>One leg extended; walk hands up leg; roll back and up. <strong>Primary:</strong> Hamstrings, spinal flexors/extensors</p></div>`;
+function _nSeries(title, isContemporary) {
+  return `<div class="series-header${isContemporary ? ' contemporary-header' : ''}">${title}${isContemporary ? ' — Contemporary Additions' : ''}</div>`;
 }
 
-function generateReformerKneelingStandingContent() {
-  return `<div class="section-image"><img src="https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=800&h=400&fit=crop" alt="Pilates studio with equipment" loading="lazy"><p class="image-caption">Kneeling and standing exercises on the reformer challenge balance, coordination, and deep core stability.</p></div>
-<h2>Reformer — Kneeling Exercises (1–2 medium springs)</h2>
-
-<div class="exercise-card"><h4>Knee Stretches — Round</h4>
-<p>Kneel on carriage, round spine. Push carriage back and pull in with abs. The carriage moves by <em>core</em>, not legs.</p></div>
-
-<div class="exercise-card"><h4>Knee Stretches — Arched</h4>
-<p>Same position with neutral/arched spine. More hip flexor and erector spinae engagement.</p></div>
-
-<div class="exercise-card"><h4>Knee Stretches — Knees Off</h4>
-<p>Round back; float knees 1 inch off carriage; press and pull. Advanced variation demanding intense core control.</p></div>
-
-<div class="exercise-card"><h4>Chest Expansion</h4>
-<p>Kneeling upright; pull straps down by sides while looking right, left, center. <strong>Primary:</strong> Posterior deltoid, rhomboids, trapezius, cervical rotators</p></div>
-
-<div class="exercise-card"><h4>Thigh Stretch</h4>
-<p>Kneeling upright; hinge back from knees with straight body. Intense quadricep and hip flexor stretch.</p></div>
-
-<div class="exercise-card"><h4>Arm Circles / Swakate</h4>
-<p>Kneeling upright; arms circle in straps. 360° shoulder girdle work.</p></div>
-
-<h2>Reformer — Standing Exercises (1–2 medium springs)</h2>
-
-<div class="exercise-card"><h4>Elephant</h4>
-<p>Stand on carriage, hands on footbar, flat back. Push carriage back by driving feet back. <strong>Primary:</strong> Hamstrings, glutes, spinal extensors</p></div>
-
-<div class="exercise-card"><h4>Running (3–4 springs)</h4>
-<p>Feet on footbar in Pilates stance; prancing feet alternately. <strong>Primary:</strong> Gastrocnemius, soleus, intrinsic foot muscles</p></div>
-
-<div class="exercise-card"><h4>Long Stretch</h4>
-<p>Plank: hands on footbar, feet on carriage. Push carriage out and pull back. Full-body plank stability.</p></div>
-
-<div class="exercise-card"><h4>Down Stretch</h4>
-<p>From plank, hinge at hips; carriage pushes back, hips lift. Hip flexors, abdominals, spinal extensors.</p></div>
-
-<div class="exercise-card"><h4>Up Stretch</h4>
-<p>Pike to plank transition; push carriage back from pike. Hamstrings, shoulders, core.</p></div>
-
-<div class="exercise-card"><h4>Side Splits</h4>
-<p>Standing on carriage facing side; press carriage out with inner thighs controlling return. <strong>Primary:</strong> Adductors, glutes</p></div>
-
-<div class="exercise-card"><h4>Front Splits</h4>
-<p>One foot on carriage, one on platform; lunge position. Hip flexors, glutes, quadriceps. Advanced.</p></div>`;
+function _nBadgeStyles() {
+  return `<style>
+.badge-classical, .badge-contemporary { display:inline-block; font-size:0.72rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; padding:3px 10px; border-radius:999px; vertical-align:middle; margin-left:8px; }
+.badge-classical { background:#7A6655; color:#FAF7F2; }
+.badge-contemporary { background:#FAF7F2; color:#7A6655; border:1px solid #A38D78; }
+.exercise-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:0.92rem; }
+.exercise-table th, .exercise-table td { border:1px solid #E2DCD4; padding:8px 12px; text-align:left; vertical-align:top; }
+.exercise-table th { background:#F0EBE3; color:#7A6655; width:24%; font-weight:600; }
+.series-header { margin-top:32px; padding:10px 16px; background:#7A6655; color:#FAF7F2; border-radius:6px; font-size:1rem; letter-spacing:0.05em; text-transform:uppercase; font-weight:600; }
+.contemporary-header { background:#A38D78; }
+.level-intro { background:#FAF7F2; border-left:4px solid #A38D78; padding:16px 20px; margin:16px 0 24px; border-radius:4px; }
+</style>`;
 }
 
-function generateReformerAdvancedContent() {
-  return `<h2>Advanced & Additional Reformer Exercises</h2>
-<div class="section-image"><img src="https://images.unsplash.com/photo-1518611012118-696072aa579a?w=800&h=400&fit=crop" alt="Advanced reformer exercise" loading="lazy"><p class="image-caption">Advanced reformer work demands coordination, balance, and deep core control.</p></div>
-<p>These exercises extend beyond the foundational sequence. They require solid core stability, body awareness, and comfort on the equipment. Many are classified as intermediate-to-advanced.</p>
+// ============================================================================
+// SECTION 1: ANATOMY, SAFETY & HISTORY
+// ============================================================================
 
-<h3>Additional Standing & Platform Exercises</h3>
+function generateReformerAnatomyContent() {
+  return _nBadgeStyles() + `
+<h2>The Reformer — Anatomy, Safety &amp; History</h2>
 
-<div class="exercise-card"><h4>Snake/Twist</h4>
-<p><strong>Springs:</strong> 1 medium | <strong>Level:</strong> Advanced</p>
-<p><strong>Think of it like:</strong> A moving side plank with a rotation — imagine wringing out a towel with your whole body.</p>
-<p><strong>Setup:</strong> One hand on the footbar, one foot on the headrest, body in a side-facing position. Top foot stacks on lower foot.</p>
-<p><strong>Movement:</strong> Push the carriage out while rotating your body underneath into a twist, then return. Your spine moves through flexion, extension, and rotation all in one fluid motion.</p>
-<p><strong>Works:</strong> Obliques, shoulders, deep spinal rotators, hip stabilizers</p>
-<p><strong>Watch for:</strong> Collapsing through the shoulder, rushing the twist, holding breath</p>
+<div class="level-intro">
+<p><strong>Welcome to the Reformer.</strong> Joseph Pilates' signature apparatus is a spring-loaded sliding carriage system that trains the whole body against smooth, variable resistance. Before you teach a single exercise, you have to know the machine, respect the springs, and understand where this work comes from.</p>
 </div>
 
-<div class="exercise-card"><h4>Star</h4>
-<p><strong>Springs:</strong> 1 medium | <strong>Level:</strong> Advanced</p>
-<p><strong>Think of it like:</strong> A side plank that reaches for the sky — your body makes a five-pointed star shape.</p>
-<p><strong>Setup:</strong> Side plank with one hand on the footbar, feet stacked on the carriage.</p>
-<p><strong>Movement:</strong> In the side plank position, lift the top leg toward the ceiling. The carriage can remain still or move slightly for an added challenge. Hold and breathe.</p>
-<p><strong>Works:</strong> Obliques, hip abductors, shoulder stabilizers, full lateral chain</p>
-<p><strong>Watch for:</strong> Hip sinking, shoulder shrugging toward ear, top leg rotating forward</p>
-</div>
+<h3>A Brief History of the Reformer</h3>
+<p>Joseph Pilates developed the earliest version of what he called the "Universal Reformer" during his internment in England during World War I. Working with injured soldiers and bedridden patients, he attached springs to hospital beds so people could begin rehabilitation before they could stand. Those springs, that horizontal position, and the concept of assisted, resisted movement became the foundation of the apparatus we still use today.</p>
+<p>By the time Joe opened his New York studio on Eighth Avenue in 1926, the Reformer was central to his method. The classical Gratz Reformer — built to his exact specifications with a single uniform spring weight — remains the closest thing to his original design. Contemporary manufacturers like Balanced Body, STOTT, and Peak Pilates offer color-coded springs of varying resistance, giving teachers more precision but also more decisions.</p>
 
-<div class="exercise-card"><h4>Mermaid on Reformer</h4>
-<p><strong>Springs:</strong> 1 light | <strong>Level:</strong> Intermediate</p>
-<p><strong>Think of it like:</strong> A seated side stretch where the spring resistance helps you reach further than you could alone.</p>
-<p><strong>Setup:</strong> Seated sideways on the carriage, one hand holds the strap or footbar, legs folded to one side.</p>
-<p><strong>Movement:</strong> Inhale and reach the top arm overhead, letting the spring assist the side stretch. Exhale to return. The lateral body gets a deep, supported opening.</p>
-<p><strong>Works:</strong> Lateral trunk, intercostals, obliques, shoulder girdle</p>
-<p><strong>Watch for:</strong> Collapsing forward rather than reaching up and over, gripping with the supporting hand</p>
-</div>
+<h3>Reformer Anatomy — Know Every Part</h3>
+<table>
+<tr><th>Component</th><th>What It Is</th><th>Why It Matters</th></tr>
+<tr><td><strong>Frame</strong></td><td>The wooden or metal base that houses the entire apparatus.</td><td>Provides the stable structure. Never step on it as a shortcut.</td></tr>
+<tr><td><strong>Carriage</strong></td><td>The padded, sliding platform that moves on wheels along the rails.</td><td>Where the client lies, sits, kneels, or stands. It is always moving — respect the momentum.</td></tr>
+<tr><td><strong>Springs</strong></td><td>Four or five springs connecting carriage to frame.</td><td>Provide resistance. On classical, all one weight. On contemporary, color-coded.</td></tr>
+<tr><td><strong>Gearbar / Spring Bar</strong></td><td>The bar the springs hook onto (contemporary only).</td><td>Different positions change spring tension length.</td></tr>
+<tr><td><strong>Footbar</strong></td><td>Padded bar at one end, usually adjustable.</td><td>Push-off point for footwork, plank series, and standing work.</td></tr>
+<tr><td><strong>Headrest</strong></td><td>Small hinged pad at the head end of the carriage.</td><td>Up for spinal flexion (protects neck); down for neutral and extension work.</td></tr>
+<tr><td><strong>Shoulder Blocks</strong></td><td>Padded blocks at the head end that flank the carriage.</td><td>Prevent sliding when pushing away from the footbar; provide grip in inversions.</td></tr>
+<tr><td><strong>Ropes &amp; Risers</strong></td><td>Straps or ropes attached to the carriage via pulleys at the shoulder end.</td><td>Hand or foot loops for upper body, leg, and box work.</td></tr>
+<tr><td><strong>Long Box</strong></td><td>Padded rectangular box placed lengthwise on the carriage.</td><td>Used for prone, supine, and seated exercises off the carriage surface.</td></tr>
+<tr><td><strong>Short Box</strong></td><td>The same box placed widthwise across the carriage.</td><td>Seated abdominal, side, and rotation work with feet anchored.</td></tr>
+<tr><td><strong>Jumpboard</strong></td><td>Removable padded board that replaces the footbar.</td><td>Turns the Reformer into a horizontal cardio trampoline.</td></tr>
+<tr><td><strong>Sitting Platform</strong></td><td>Fixed platform at the shoulder end of the frame.</td><td>Standing surface for side splits, mermaid, and hybrid standing work.</td></tr>
+</table>
 
-<div class="exercise-card"><h4>Scooter / Skating</h4>
-<p><strong>Springs:</strong> 1–2 medium | <strong>Level:</strong> Intermediate</p>
-<p><strong>Think of it like:</strong> Exactly what the name suggests — one-legged skating, like pushing off on an ice skate or scooter.</p>
-<p><strong>Setup:</strong> Stand on the platform with one foot. Place the other foot on the carriage. Hands can touch the footbar lightly for balance.</p>
-<p><strong>Movement:</strong> Push the carriage foot back (extending that hip and knee), then control the return. The standing leg works as the stabilizer, the moving leg does the "skating" push.</p>
-<p><strong>Works:</strong> Glutes, hamstrings, hip stabilizers of the standing leg, inner thighs</p>
-<p><strong>Watch for:</strong> Hip hiking on the standing side, rushing the return, losing balance</p>
-</div>
+<h3>Spring Resistance (Contemporary — Balanced Body Standard)</h3>
+<table>
+<tr><th>Color</th><th>Value</th><th>Feels Like</th><th>Common Use</th></tr>
+<tr><td><strong>Yellow</strong></td><td>¼ (very light)</td><td>Assistive, barely there</td><td>Feet in straps for beginners, arm work for smaller clients</td></tr>
+<tr><td><strong>Blue</strong></td><td>½ (light)</td><td>Light and controlled</td><td>Arm work, feet in straps, ab work</td></tr>
+<tr><td><strong>Red</strong></td><td>1 (medium/heavy)</td><td>The workhorse spring</td><td>Footwork, kneeling series, plank series</td></tr>
+<tr><td><strong>Green</strong></td><td>2 (heavy)</td><td>Very heavy</td><td>Heavy footwork, standing work</td></tr>
+<tr><td><strong>Two Reds</strong></td><td>Balanced load</td><td>Solid, controllable</td><td>Standing side splits, heavier footwork</td></tr>
+<tr><td><strong>All Springs</strong></td><td>Stabilized</td><td>Locked-feeling carriage</td><td>Long box work, safety default when in doubt</td></tr>
+</table>
+<p><em>Classical note:</em> Gratz Reformers do not use color coding. They use a single, heavier universal spring, and load is adjusted by the <em>number</em> of springs, not the color.</p>
 
-<div class="exercise-card"><h4>Balance Control Front</h4>
-<p><strong>Springs:</strong> 1–2 medium | <strong>Level:</strong> Advanced</p>
-<p><strong>Think of it like:</strong> A plank from the opposite direction — your legs are on the carriage and you're facing it.</p>
-<p><strong>Setup:</strong> Stand on the footbar facing the carriage. Reach down and place both hands on the carriage. Body is in an inverted plank-like position.</p>
-<p><strong>Movement:</strong> Push the carriage away with your feet while maintaining a strong plank line, then control return. Demands exceptional upper body strength and body awareness.</p>
-<p><strong>Works:</strong> Shoulders, triceps, core, hip extensors</p>
-<p><strong>Watch for:</strong> Lower back sagging, shoulder collapsing, moving too fast</p>
-</div>
+<h3>Safety Protocols — Non-Negotiable</h3>
+<ul>
+<li>Check spring attachment before every client. Springs walk loose over time.</li>
+<li>Never let a carriage move without an anchored body on it. A loose carriage with a spring popping is dangerous.</li>
+<li>Mount and dismount deliberately — one point of contact, then two, then transfer weight.</li>
+<li>Headrest up for any spinal flexion (Hundred, ab prep). Down for neutral or extension.</li>
+<li>When changing springs mid-exercise, hold the carriage in with your hand. Never let a client hold the load while you swap.</li>
+<li>Spot every inversion, every Long Spine, every Snake/Twist. Hand under the shoulders.</li>
+<li>Watch fingers around the gearbar, ropes, and the space between carriage and frame.</li>
+<li>Communicate every spring change out loud — "Adding a red for footwork."</li>
+</ul>
 
-<div class="exercise-card"><h4>Long Back Stretch</h4>
-<p><strong>Springs:</strong> 1–2 medium | <strong>Level:</strong> Intermediate-Advanced</p>
-<p><strong>Think of it like:</strong> A reverse plank on wheels — your back faces down and you push and pull with straight arms.</p>
-<p><strong>Setup:</strong> Seated on the carriage facing away from the footbar. Hands grip the footbar behind you, feet press into the footbar. Body lifts into a reverse plank.</p>
-<p><strong>Movement:</strong> Push the carriage away from the footbar with your arms, then pull back. The challenge is maintaining the rigid plank position throughout.</p>
-<p><strong>Works:</strong> Triceps, shoulder extensors, core, glutes, hamstrings</p>
-<p><strong>Watch for:</strong> Hips dropping, wrists collapsing, holding breath</p>
-</div>
+<h3>The Five Foundational Components</h3>
+<p>Every Reformer exercise, from Footwork to Snake, is built on the same five principles. Return to them constantly.</p>
+<table>
+<tr><th>Component</th><th>What It Means on the Reformer</th></tr>
+<tr><td><strong>Core</strong></td><td>Deep abdominal engagement and pelvic-floor connection stabilize the pelvis and spine while the carriage moves.</td></tr>
+<tr><td><strong>Breath</strong></td><td>Diaphragmatic (belly) inhale, posterior lateral (back and side rib) inhale. Exhale on exertion. Never hold the breath.</td></tr>
+<tr><td><strong>Alignment</strong></td><td>Neutral pelvis, stacked ribs over hips, elongated cervical spine. The reformer exaggerates any misalignment.</td></tr>
+<tr><td><strong>Balance</strong></td><td>Even distribution between right and left, front and back. The moving carriage exposes side dominance instantly.</td></tr>
+<tr><td><strong>Awareness</strong></td><td>Presence. Feeling the spring load, the shift of weight, the position of the pelvis. Teach clients to feel, not just perform.</td></tr>
+</table>
 
-<div class="exercise-card"><h4>Russian Splits</h4>
-<p><strong>Springs:</strong> 1–2 light-medium | <strong>Level:</strong> Advanced</p>
-<p><strong>Think of it like:</strong> A deep lunge where both the front and back foot can slide — requiring total control of your split position.</p>
-<p><strong>Setup:</strong> One foot on the footbar, one foot on the carriage in a deep split/lunge. Both feet are on moving or semi-fixed surfaces.</p>
-<p><strong>Movement:</strong> Lower and lift through the lunge, or allow the carriage foot to push away for a deeper split, then return. Requires exceptional hip flexibility and stability.</p>
-<p><strong>Works:</strong> Hip flexors, quadriceps, hamstrings, adductors, glutes</p>
-<p><strong>Watch for:</strong> Collapsing into the front knee, losing spinal neutrality, over-extending beyond flexibility</p>
-</div>
+<h3>Six Ways to Modify Any Exercise</h3>
+<p>When an exercise doesn't fit the client, don't skip it — modify it. NUMA teachers use six levers:</p>
+<ol>
+<li><strong>Lever length</strong> — bend a limb to shorten the lever, straighten it to lengthen.</li>
+<li><strong>Range of motion</strong> — smaller range for less challenge, larger for more.</li>
+<li><strong>Props</strong> — magic circle, overball, block, strap.</li>
+<li><strong>Assist or resist</strong> — add a spring to assist a weak movement; remove to demand more.</li>
+<li><strong>Simplify or complicate</strong> — remove a variable (both feet down) or add one (one leg lifted).</li>
+<li><strong>Speed</strong> — slow it down to expose control; speed it up to challenge coordination.</li>
+</ol>
 
-<div class="exercise-card"><h4>Tendon Stretch (Advanced)</h4>
-<p><strong>Springs:</strong> 1–2 medium | <strong>Level:</strong> Advanced</p>
-<p><strong>Think of it like:</strong> A seated push-up where you lift your whole body with straight arms and push the carriage back with your feet simultaneously.</p>
-<p><strong>Setup:</strong> Seated on the carriage, feet on the footbar, hands gripping the carriage beside your hips with straight arms.</p>
-<p><strong>Movement:</strong> Press through your hands to lift your hips off the carriage, then push the carriage back with your feet. The "tendon stretch" comes from the Achilles tendon lengthening as the heel lowers over the footbar.</p>
-<p><strong>Works:</strong> Triceps, shoulders, core, hip flexors, calves</p>
-<p><strong>Watch for:</strong> Elbows bending, back rounding, collapsing at the wrists</p>
-</div>
-
-<div class="exercise-card"><h4>Side-Lying Hip Work</h4>
-<p><strong>Springs:</strong> 1 light-medium | <strong>Level:</strong> Beginner-Intermediate</p>
-<p><strong>Think of it like:</strong> The mat side kick series — but with the added challenge and support of the reformer.</p>
-<p><strong>Setup:</strong> Side-lying on the carriage, bottom foot on the footbar or feet in straps. Head rests on the outstretched bottom arm.</p>
-<p><strong>Movement (Feet in Straps):</strong> Move the top leg forward and back, up and down, or in circles. The spring resistance adds challenge to both the push and the return.<br>
-<strong>Movement (Foot on Footbar):</strong> Press the bottom foot into the footbar to lift the hips, working the lateral chain.</p>
-<p><strong>Works:</strong> Gluteus medius, hip abductors/adductors, lateral stabilizers</p>
-<p><strong>Watch for:</strong> Hip rolling forward or back, losing the side-lying stack, shoulders creeping up</p>
-</div>
-
-<h3>Stomach Massage Series</h3>
-<p><strong>Think of it like:</strong> A seated workout for your abs and hip flexors — the name "stomach massage" refers to the internal massage your organs receive from the core engagement and spinal movement.</p>
-<p><strong>Springs:</strong> 3–4 (heavy) | <strong>Level:</strong> Intermediate-Advanced | <strong>Position:</strong> Seated facing the footbar, perched at the front edge of the carriage.</p>
-
-<div class="exercise-card"><h4>Stomach Massage — Round</h4>
-<p><strong>Setup:</strong> Seated at front of carriage, spine in a deep C-curve, hands on footbar, feet on footbar in parallel.</p>
-<p><strong>Movement:</strong> Press carriage back with feet straightening legs, then pull back in maintaining the C-curve. Your lower back rounds deeply the whole time.</p>
-<p><strong>Works:</strong> Deep abdominals, hip flexors, quadriceps</p>
-<p><strong>Watch for:</strong> Losing the C-curve and sitting up tall (that removes the massage effect)</p>
-</div>
-
-<div class="exercise-card"><h4>Stomach Massage — Flat Back</h4>
-<p><strong>Setup:</strong> Same as Round, but sit up tall with a flat spine — proud chest, neutral spine.</p>
-<p><strong>Movement:</strong> Press and return with a flat back. Now the hip flexors and spinal extensors work hard to maintain the upright position.</p>
-<p><strong>Works:</strong> Hip flexors, quadriceps, spinal extensors, scapular stabilizers</p>
-<p><strong>Watch for:</strong> Lower back collapsing, shoulders rounding forward</p>
-</div>
-
-<div class="exercise-card"><h4>Stomach Massage — Reach</h4>
-<p><strong>Setup:</strong> Flat back position, but now remove hands from the footbar and reach arms forward or up.</p>
-<p><strong>Movement:</strong> Press and return with arms reaching. No hands means no upper body assistance — the core and hip flexors must do all the work.</p>
-<p><strong>Works:</strong> Deep core, hip flexors, shoulder girdle, balance</p>
-<p><strong>Watch for:</strong> Leaning back when feet extend (losing the connection), arms flopping rather than actively reaching</p>
-</div>
-
-<div class="exercise-card"><h4>Stomach Massage — Twist</h4>
-<p><strong>Setup:</strong> Flat back, arms lifted or hands at shoulders.</p>
-<p><strong>Movement:</strong> As the carriage goes out, rotate the torso to one side; return to center as it comes back. Alternate sides.</p>
-<p><strong>Works:</strong> Obliques, spinal rotators, hip flexors, stabilizers</p>
-<p><strong>Watch for:</strong> Over-rotating and losing balance, twisting from the shoulders instead of the waist</p>
-</div>
-
-<h3>Bridging & Pelvic Work</h3>
-
-<div class="exercise-card"><h4>Pelvic Lift / Bridge on Reformer</h4>
-<p><strong>Springs:</strong> 2–3 medium | <strong>Level:</strong> Beginner-Intermediate</p>
-<p><strong>Think of it like:</strong> A mat bridge but with spring resistance making your hamstrings and glutes work harder to hold the position.</p>
-<p><strong>Setup:</strong> Supine on the carriage, feet on the footbar hip-width apart, knees bent.</p>
-<p><strong>Movement:</strong> Peel the spine up vertebra by vertebra into a bridge. At the top, press the carriage out (straightening the legs slightly) then pull back in. Lower the spine back down with control.</p>
-<p><strong>Variation:</strong> Hold the bridge position and simply press and pull the carriage for a more isolated hamstring/glute challenge.</p>
-<p><strong>Works:</strong> Glutes, hamstrings, spinal erectors, core stabilizers</p>
-<p><strong>Watch for:</strong> Hips dropping unevenly, lower back arching excessively at the top, feet rolling in or out</p>
-</div>`;
+<h3>NUMA Level Progression</h3>
+<p>This module organizes the Reformer repertoire in the way we teach it at NUMA:</p>
+<table>
+<tr><th>Level</th><th>Focus</th><th>Who's Ready</th></tr>
+<tr><td><strong>Level 1 — Foundation</strong></td><td>Neutral spine, basic spring management, breath, footwork, feet in straps, elephant, basic arm work.</td><td>New clients, first 6–8 sessions.</td></tr>
+<tr><td><strong>Level 1.5 — Intermediate</strong></td><td>Add coordination, Hundred, Short Box, Long Spine, Chest Expansion, plank series, seated back rowing.</td><td>Clients with clean neutral pelvis and confident spring changes.</td></tr>
+<tr><td><strong>Level 2 — Advanced</strong></td><td>Full repertoire: Snake/Twist, Star, Control Balance, Teaser on the Box, Long Back Stretch, Kneeling Side Arm, Backstroke.</td><td>Clients with body awareness, strength, and control across all planes.</td></tr>
+</table>
+`;
 }
+
+// ============================================================================
+// SECTION 2: REFORMER LEVEL 1
+// ============================================================================
+
+function generateReformerLevel1Content() {
+  const parts = [];
+  parts.push(`<h2>Reformer Level 1 — Foundation Repertoire</h2>
+<div class="level-intro">
+<p>Level 1 builds the base every future exercise depends on: neutral pelvis, connected breath, confident spring management, and clean footwork mechanics. Do not rush through this level. A client who owns their Level 1 owns everything above it.</p>
+<p>Exercises are ordered in the <strong>classical sequence</strong> first, followed by <strong>contemporary additions</strong> we include at NUMA.</p>
+</div>`);
+
+  // --- FOOTWORK ---
+  parts.push(_nSeries('Series 1 — Footwork'));
+  parts.push(_nX({
+    name: 'Footwork — Toes (Pilates V)',
+    badge: 'classical',
+    purpose: 'Warm the body, wake the feet, connect the leg line into the pelvis. Establishes neutral spine under load.',
+    placement: 'Balls of the feet on the footbar, heels lifted and pressed together in a small Pilates V. Hands rest by hips or on the frame.',
+    setup: 'Supine on the carriage, headrest flat or slightly elevated, shoulders under the blocks, pelvis neutral. Spring load: 3 to 4 reds (classical) or 3 reds (contemporary).',
+    cue: '"Press evenly through the balls of both feet. Lengthen the crown of the head away from the tailbone as the carriage moves out."',
+    muscles: 'Quadriceps, gluteals, calves, hip external rotators, deep abdominals.',
+    mods: 'Reduce spring load for weaker knees. Add a small ball between the ankles to cue adductor engagement. Progress by decreasing hand contact.'
+  }));
+  parts.push(_nX({
+    name: 'Footwork — Arches',
+    badge: 'classical',
+    purpose: 'Engage the intrinsic foot and peroneals. Trains a strong, articulated foot.',
+    placement: 'Arches of the feet cupped over the footbar, feet parallel and hip-distance apart.',
+    setup: 'Same supine setup. Springs unchanged from Toes.',
+    cue: '"Wrap the arches around the bar as if you\'re gripping a curb with your feet."',
+    muscles: 'Quadriceps, peroneals, intrinsic foot muscles, adductors.',
+    mods: 'For sensitive arches, place a small towel over the bar. Reduce range if calves cramp.'
+  }));
+  parts.push(_nX({
+    name: 'Footwork — Heels',
+    badge: 'classical',
+    purpose: 'Isolate the posterior chain. Stretch the calves and Achilles under load.',
+    placement: 'Heels on the footbar, toes drawn back toward the shins in dorsiflexion, feet hip-distance and parallel.',
+    setup: 'Same supine setup.',
+    cue: '"Toes reach for your face while you press the carriage out through the heels."',
+    muscles: 'Hamstrings, gluteals, quadriceps, tibialis anterior.',
+    mods: 'Reduce dorsiflexion for tight calves. Bend knees slightly at the end if hamstrings cramp.'
+  }));
+  parts.push(_nX({
+    name: 'Footwork — Tendon Stretch',
+    badge: 'classical',
+    purpose: 'Lengthen the gastrocnemius and soleus. Train ankle articulation.',
+    placement: 'Balls of the feet on the footbar in Pilates V. Heels rise and lower below the bar.',
+    setup: 'Same supine setup. Carriage stays out at full extension.',
+    cue: '"Rise onto the balls of the feet, then let the heels drop below the bar with control."',
+    muscles: 'Gastrocnemius, soleus, deep intrinsic foot.',
+    mods: 'Reduce heel drop for Achilles sensitivity. Reduce reps for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Footwork — Running',
+    badge: 'classical',
+    purpose: 'Cardiovascular finish for the footwork series. Trains alternating leg mechanics.',
+    placement: 'Balls of both feet on the footbar in Pilates V.',
+    setup: 'Carriage stays extended. Alternate one heel lifting as the other lowers, like slow running in place.',
+    cue: '"One heel presses the floor while the other lifts. Even, rhythmic, no bouncing pelvis."',
+    muscles: 'Calves, quadriceps, gluteals, deep abdominals.',
+    mods: 'Slow the tempo. Reduce reps. Keep carriage fully extended throughout.'
+  }));
+
+  parts.push(_nSeries('Series 1 — Footwork', true));
+  parts.push(_nX({
+    name: 'Footwork — Parallel (Contemporary)',
+    badge: 'contemporary',
+    purpose: 'Neutral-stance footwork without external rotation. Common in modern studios and helpful for hip-restricted clients.',
+    placement: 'Balls of the feet on the footbar, feet parallel and hip-distance apart.',
+    setup: 'Same supine setup. 3 reds.',
+    cue: '"Feet track over second and third toes. Knees bend directly over the ankles."',
+    muscles: 'Quadriceps, hamstrings, calves.',
+    mods: 'Interchangeable with classical positions. Cue neutral pelvis emphatically.'
+  }));
+  parts.push(_nX({
+    name: 'Footwork — Wide Second',
+    badge: 'contemporary',
+    purpose: 'Target inner thighs and lateral hips. Widens the base for stability challenge.',
+    placement: 'Feet wide on the footbar, toes turned out modestly, heels on the bar.',
+    setup: 'Same supine setup.',
+    cue: '"Track knees over pinky toes as you press out. Squeeze thighs together on the way in."',
+    muscles: 'Adductors, gluteals, quadriceps.',
+    mods: 'Reduce width for hip discomfort. Add a red for stronger clients.'
+  }));
+
+  // --- SUPINE ---
+  parts.push(_nSeries('Series 2 — Supine (Non-Footwork)'));
+  parts.push(_nX({
+    name: 'Ab Prep',
+    badge: 'classical',
+    purpose: 'The foundational spinal flexion pattern. Prepares the client for The Hundred, Coordination, and every advanced supine exercise.',
+    placement: 'Hands can rest by the sides on the carriage or hold light straps behind the head.',
+    setup: 'Supine, knees in tabletop or feet on footbar. Headrest up. Springs: 2 to 3 reds if using the footbar, 1 red if using straps.',
+    cue: '"Inhale to prepare. Exhale, lift the head, curl the ribs toward the hips. Eyes to the belly button."',
+    muscles: 'Rectus abdominis, obliques, deep neck flexors.',
+    mods: 'Keep the head down and only lift the ribs for cervical issues. Progress by adding straps.'
+  }));
+  parts.push(_nX({
+    name: 'Arm Circle Series — Lower &amp; Lift',
+    badge: 'classical',
+    purpose: 'Train shoulder mobility and scapular control against light spring resistance.',
+    placement: 'Hands in the arm straps, arms straight up over the shoulders, palms facing down.',
+    setup: 'Supine, headrest flat, feet on the footbar or bent on the carriage. Springs: 1 blue or 1 red (light).',
+    cue: '"Ribs stay heavy. Arms lower only as far as the shoulders can stay soft."',
+    muscles: 'Anterior deltoid, latissimus dorsi, serratus anterior, deep abdominals.',
+    mods: 'Reduce the range of arm lower for shoulder restriction. Do only the ab-adduction and circles for stiff shoulders.'
+  }));
+  parts.push(_nX({
+    name: 'Arm Circle Series — Circles',
+    badge: 'classical',
+    purpose: 'Full shoulder circumduction against spring resistance.',
+    placement: 'Arms straight up, palms down.',
+    setup: 'Same as above.',
+    cue: '"Circle from the shoulder joint, not the elbow. Small, controlled, even."',
+    muscles: 'Full shoulder girdle, latissimus, pecs, deep abdominals.',
+    mods: 'Reduce circle size. Perform one direction only for shoulder recovery.'
+  }));
+  parts.push(_nX({
+    name: 'Arm Circle Series — Triceps Press',
+    badge: 'classical',
+    purpose: 'Isolate the triceps against light spring resistance.',
+    placement: 'Hands in straps, elbows bent at 90 degrees, upper arms alongside the head.',
+    setup: 'Same supine setup.',
+    cue: '"Extend from the elbow only. Upper arm stays glued next to the ear."',
+    muscles: 'Triceps brachii, deep abdominals.',
+    mods: 'Bring elbows slightly wider if shoulder is tight overhead.'
+  }));
+  parts.push(_nX({
+    name: 'Feet in Straps — Frogs',
+    badge: 'classical',
+    purpose: 'Introduction to feet-in-straps work. Trains hip mobility and pelvic stability.',
+    placement: 'Feet in the loops (or straps around the feet), heels together, toes softly pointed in Pilates V.',
+    setup: 'Supine, headrest flat, arms by sides. Springs: 1 red or 1 red + 1 blue.',
+    cue: '"Draw the heels toward the seat, then press out to a diamond. Pelvis stays glued to the carriage."',
+    muscles: 'Hip flexors, hip extensors, adductors, hamstrings.',
+    mods: 'Reduce range. Use two feet in one loop if straps feel unstable. Add a headrest support for the neck.'
+  }));
+  parts.push(_nX({
+    name: 'Feet in Straps — Circles',
+    badge: 'classical',
+    purpose: 'Mobility for the hip socket. Balanced work through the rotators.',
+    placement: 'Same as Frogs.',
+    setup: 'Same supine setup.',
+    cue: '"Circle from the hip joint. Small circles first. Reverse the direction after five."',
+    muscles: 'Hip rotators, abductors, adductors, deep abdominals.',
+    mods: 'Reduce circle size. Do one leg at a time for coordination issues.'
+  }));
+
+  // --- LONG BOX (prone Breast Stroke Prep) ---
+  parts.push(_nSeries('Series 3 — Long Box (Prone Basics)'));
+  parts.push(_nX({
+    name: 'Breast Stroke Prep',
+    badge: 'classical',
+    purpose: 'Introduce prone thoracic extension under light spring resistance. Prepares the back for full Breast Stroke and Pulling Straps later.',
+    placement: 'Hands in the arm straps, elbows bent, forearms parallel to the floor.',
+    setup: 'Long box placed lengthwise on the carriage. Prone on the box, facing the footbar, hips over the front edge. Springs: 1 blue (very light).',
+    cue: '"Exhale, sweep the arms overhead without letting the hands drop toward the springs. Inhale, circle wide back to start."',
+    muscles: 'Posterior deltoid, rhomboids, mid trapezius, spinal extensors, gluteals.',
+    mods: 'Keep the chest heavy on the box for beginners. Add thoracic extension only when strength is present.'
+  }));
+
+  // --- LUNGING ---
+  parts.push(_nSeries('Series 4 — Lunging'));
+  parts.push(_nX({
+    name: 'Lunge (Kneeling Runner)',
+    badge: 'classical',
+    purpose: 'Open the front of the hip. Stretch hip flexors and quads while training pelvic stability.',
+    placement: 'Front foot flat on the footbar, back knee down on the carriage, hands on the shoulder blocks or footbar for balance.',
+    setup: 'Springs: 1 red (moderate). Headrest flat.',
+    cue: '"Sink the pelvis toward the front heel. Chest lifts. Back thigh reaches long."',
+    muscles: 'Hip flexors, quadriceps, gluteals of the back leg.',
+    mods: 'Place a pad under the back knee. Reduce depth of the lunge. Hold shoulder blocks for balance.'
+  }));
+
+  // --- STANDING ---
+  parts.push(_nSeries('Series 5 — Standing / Plank'));
+  parts.push(_nX({
+    name: 'Elephant',
+    badge: 'classical',
+    purpose: 'Trains posterior chain length and deep abdominal engagement in a standing pike. Foundational plank series exercise.',
+    placement: 'Feet flat on the carriage, heels against the shoulder blocks. Hands on the footbar, shoulder-width.',
+    setup: 'Standing in a pike, pelvis over the heels, spine in a rounded C-curve. Springs: 1 to 2 reds.',
+    cue: '"Round the spine like a scoop of ice cream. Push the carriage out one inch with the abdominals. Pull it home with the abdominals."',
+    muscles: 'Deep abdominals, hamstrings, hip flexors, latissimus.',
+    mods: 'Reduce the carriage movement to just a few inches. Bend the knees slightly for tight hamstrings.'
+  }));
+  parts.push(_nX({
+    name: 'Pelvic Lift Prep',
+    badge: 'classical',
+    purpose: 'Introduces the bridge shape on the reformer. Trains hamstring and glute engagement against spring resistance.',
+    placement: 'Feet on the footbar, hip-distance, parallel. Hands by sides on the carriage.',
+    setup: 'Supine, headrest flat, knees bent. Springs: 2 to 3 reds.',
+    cue: '"Peel the tailbone off the carriage first. Pause at the top with hips level. Roll down bone by bone."',
+    muscles: 'Gluteals, hamstrings, spinal erectors, deep abdominals.',
+    mods: 'Reduce spring for beginners so the hamstrings do more work. Hold at the top and add small pulses for a progression.'
+  }));
+
+  return parts.join('\n');
+}
+
+// ============================================================================
+// SECTION 3: REFORMER 1.5 INTERMEDIATE
+// ============================================================================
+
+function generateReformerLevel15Content() {
+  const parts = [];
+  parts.push(`<h2>Reformer 1.5 — Intermediate Repertoire</h2>
+<div class="level-intro">
+<p>Level 1.5 layers coordination, articulation, and stamina onto the Level 1 base. Clients must own neutral pelvis and confident spring changes before entering this level. Cueing shifts from "find the position" to "flow through the position."</p>
+</div>`);
+
+  // FOOTWORK — none new; Level 1 footwork continues.
+
+  // SUPINE
+  parts.push(_nSeries('Series 1 — Supine'));
+  parts.push(_nX({
+    name: 'The Hundred',
+    badge: 'classical',
+    purpose: 'Warm the body and connect breath to core. The classical pulse-work of the Pilates method, adapted to the reformer.',
+    placement: 'Hands in the arm straps (or holding the top of the straps), arms extended long past the hips.',
+    setup: 'Supine, headrest up, legs in tabletop or extended to 45 degrees, spine curled into ab prep. Springs: 1 red or 1 red + 1 blue.',
+    cue: '"Inhale for 5 counts, exhale for 5. Arms pump six inches. Long past the hips."',
+    muscles: 'Rectus abdominis, obliques, hip flexors, deep neck flexors, latissimus.',
+    mods: 'Keep knees in tabletop for beginners. Head down variation for cervical issues. Reduce to 50 pulses.'
+  }));
+  parts.push(_nX({
+    name: 'Coordination',
+    badge: 'classical',
+    purpose: 'Full-body coordination pattern. Tests abdominal stability while limbs move independently.',
+    placement: 'Hands in arm straps.',
+    setup: 'Supine, headrest up, spine curled into ab prep. Legs in tabletop. Springs: 1 red or 1 red + 1 blue.',
+    cue: '"Arms extend, legs extend, legs open, legs close, arms bend, legs bend. Six moving parts, one breath phrase."',
+    muscles: 'Rectus abdominis, hip flexors, adductors, triceps, latissimus.',
+    mods: 'Take one variable out at a time (skip the leg open-close). Slow the tempo down to establish sequence.'
+  }));
+  parts.push(_nX({
+    name: 'Feet in Straps — Long Spine',
+    badge: 'classical',
+    purpose: 'Full spinal articulation through inversion. Deep hamstring stretch. Advanced feet-in-straps work.',
+    placement: 'Feet in straps, heels together, Pilates V.',
+    setup: 'Supine, headrest flat, arms alongside the body. Springs: 1 to 2 reds.',
+    cue: '"Legs press to the ceiling. Roll the pelvis up in one line. Open the legs at the top. Roll down bone by bone."',
+    muscles: 'Hamstrings, deep abdominals, spinal erectors, gluteals.',
+    mods: 'Skip the leg opening for beginners. Reduce spring for weaker abdominals. Spot at the shoulders.'
+  }));
+  parts.push(_nX({
+    name: 'Feet in Straps — Short Spine',
+    badge: 'classical',
+    purpose: 'Articulated inversion with knees bent. Trains spinal segmentation and hamstring flexibility.',
+    placement: 'Feet in straps.',
+    setup: 'Supine, headrest flat. Springs: 1 red + 1 blue.',
+    cue: '"Legs press up. Roll the pelvis up. Bend the knees toward the ears. Roll down through the spine leaving the knees folded until the tailbone lands."',
+    muscles: 'Hamstrings, deep abdominals, gluteals, spinal flexors.',
+    mods: 'Shorten the range. Skip the fold if hamstrings are tight. Spot every rep.'
+  }));
+
+  // ARMS IN STRAPS - covered above via Arm Circle in L1; here we add supine variations more sophisticated? skip
+
+  // LONG BOX
+  parts.push(_nSeries('Series 2 — Long Box'));
+  parts.push(_nX({
+    name: 'Pulling Straps 1',
+    badge: 'classical',
+    purpose: 'Prone posterior chain work. Trains scapular retraction and thoracic extension.',
+    placement: 'Hands hold the straps just above the metal hardware. Palms face down initially.',
+    setup: 'Long box on carriage. Prone on box, facing headrest, hips over front edge of box. Springs: 1 red.',
+    cue: '"Slide the shoulder blades down. Pull the straps back to the hips as you lift into thoracic extension."',
+    muscles: 'Posterior deltoid, rhomboids, mid and lower trapezius, spinal extensors.',
+    mods: 'Keep chest heavy on the box for beginners. Reduce spring load if the arms can\'t reach.'
+  }));
+  parts.push(_nX({
+    name: 'Pulling Straps 2 (T-Straps)',
+    badge: 'classical',
+    purpose: 'Prone T-pull. Targets mid-back and posterior deltoid more directly than Pulling Straps 1.',
+    placement: 'Same as Pulling Straps 1.',
+    setup: 'Same setup.',
+    cue: '"Arms sweep out to a T. Squeeze the shoulder blades together. Hold the thoracic extension."',
+    muscles: 'Posterior deltoid, rhomboids, mid trapezius, spinal extensors.',
+    mods: 'Reduce range. Keep chest on box.'
+  }));
+  parts.push(_nX({
+    name: 'Ab Curl — Legs in Straps',
+    badge: 'classical',
+    purpose: 'Combines feet-in-straps leg work with abdominal curl. Prepares the client for Backstroke and Teaser on the Box.',
+    placement: 'Feet in straps, hands can hold the sides of the box or reach forward.',
+    setup: 'Supine on the long box, facing footbar, hips at front edge, legs in straps. Springs: 1 red.',
+    cue: '"Legs press slightly, curl the head and chest up, reach the hands past the hips."',
+    muscles: 'Rectus abdominis, obliques, hip flexors, hamstrings.',
+    mods: 'Reduce curl height. Skip the leg press for beginners. Cervical support with the hands.'
+  }));
+
+  // SHORT BOX
+  parts.push(_nSeries('Series 3 — Short Box'));
+  parts.push(_nX({
+    name: 'Short Box — Round Back',
+    badge: 'classical',
+    purpose: 'Trains abdominal control through a deep C-curve. Foundation of the entire Short Box series.',
+    placement: 'Feet hooked under the foot strap, hands can cross over chest or reach forward.',
+    setup: 'Short box placed across the carriage in front of the shoulder blocks. Seated on the box, feet under strap. Springs: 2 reds (heavy — carriage stabilized).',
+    cue: '"Tuck the tailbone under. Roll back only as far as the abdominals can hold. Pull yourself home ribs-first."',
+    muscles: 'Rectus abdominis, obliques, hip flexors.',
+    mods: 'Reduce the roll-back distance. Keep hands on the box for balance.'
+  }));
+  parts.push(_nX({
+    name: 'Short Box — Flat Back',
+    badge: 'classical',
+    purpose: 'Trains spinal extension and hip flexor strength.',
+    placement: 'Feet under strap, hands overhead or crossed on chest.',
+    setup: 'Same setup as Round Back.',
+    cue: '"Long straight spine. Hinge back from the hips only as far as the back can stay flat. Return the same way."',
+    muscles: 'Spinal extensors, hip flexors, quadriceps, deep abdominals.',
+    mods: 'Reduce hinge angle. Hands on the hips for control.'
+  }));
+  parts.push(_nX({
+    name: 'Short Box — Side to Side',
+    badge: 'classical',
+    purpose: 'Lateral trunk flexion under load. Trains obliques and quadratus lumborum.',
+    placement: 'Feet under strap, arms overhead or hands lightly clasped behind the head.',
+    setup: 'Same setup. Hinged back to a flat back position.',
+    cue: '"Reach the arms up and over. Bend from the ribcage, not the hip. Return through center."',
+    muscles: 'Obliques, quadratus lumborum, lateral spinal chain.',
+    mods: 'Reduce range of lateral flexion. Hands on hips for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Short Box — Twist',
+    badge: 'classical',
+    purpose: 'Spinal rotation under load.',
+    placement: 'Feet under strap, hands behind head or crossed.',
+    setup: 'Same setup, hinged back to flat back.',
+    cue: '"Rotate from the ribcage. Pelvis stays square. Return through center before switching sides."',
+    muscles: 'Obliques, spinal rotators, deep abdominals.',
+    mods: 'Reduce rotation range. Pause at center between sides.'
+  }));
+  parts.push(_nX({
+    name: 'Short Box — Tree',
+    badge: 'classical',
+    purpose: 'Hamstring stretch and spinal articulation. Signature Short Box finish.',
+    placement: 'One foot under strap, other leg lifted and held with both hands.',
+    setup: 'Same setup. One leg lifts, both hands walk up the leg toward the ankle.',
+    cue: '"Walk the hands up the leg. Roll the spine back one bone at a time. Return by pulling with the abdominals."',
+    muscles: 'Hamstrings, spinal flexors, hip flexors.',
+    mods: 'Bend the lifted knee for tight hamstrings. Reduce the roll-back distance.'
+  }));
+
+  // ARMS IN STRAPS - Seated back rowing
+  parts.push(_nSeries('Series 4 — Rowing (Seated Arms in Straps)'));
+  parts.push(_nX({
+    name: 'Seated Back Rowing — Low Row',
+    badge: 'classical',
+    purpose: 'Trains scapular depression and elbow flexion. Foundation for the full Rowing series.',
+    placement: 'Hands in the arm straps. Feet flat against the shoulder blocks, legs extended in long sit.',
+    setup: 'Seated on the carriage facing the footbar (feet toward the shoulder end). Springs: 1 red or 1 blue.',
+    cue: '"Exhale, bend the elbows and draw the hands to the ribcage. Elbows stay behind you."',
+    muscles: 'Latissimus, biceps, posterior deltoid, rhomboids, deep abdominals.',
+    mods: 'Reduce spring for smaller clients. Keep spine tall for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Seated Back Rowing — High Row',
+    badge: 'classical',
+    purpose: 'Same movement pattern with elbows lifted to shoulder height. Trains posterior deltoid.',
+    placement: 'Same as Low Row.',
+    setup: 'Same setup.',
+    cue: '"Elbows lift to shoulder height. Hands frame the face. Exhale as you bend."',
+    muscles: 'Posterior deltoid, rhomboids, upper trapezius (functional), latissimus.',
+    mods: 'Reduce spring. Reduce elbow height.'
+  }));
+  parts.push(_nX({
+    name: 'Seated Back Rowing — Biceps',
+    badge: 'classical',
+    purpose: 'Biceps isolation. Signature rowing variation.',
+    placement: 'Hands in arm straps.',
+    setup: 'Same setup.',
+    cue: '"Elbows stay lifted at shoulder height. Bend the elbows and bring the hands toward the eyebrows."',
+    muscles: 'Biceps brachii, brachialis, posterior deltoid.',
+    mods: 'Reduce spring. Bring elbows slightly lower for shoulder restriction.'
+  }));
+
+  // ARMS IN STRAPS - kneeling front
+  parts.push(_nSeries('Series 5 — Arms Facing Riser (Kneeling Front)'));
+  parts.push(_nX({
+    name: 'Kneeling Front — Serve a Tray',
+    badge: 'classical',
+    purpose: 'Trains scapular stability with arms extended forward. Kneeling adds balance challenge.',
+    placement: 'Hands in the arm straps, arms straight out in front of the chest, palms up.',
+    setup: 'Kneeling on the carriage facing the footbar, ankles pressed against the shoulder blocks. Springs: 1 blue or 1 red.',
+    cue: '"Bend the elbows and bring the arms close to the ribs. Extend forward without letting the shoulders round."',
+    muscles: 'Latissimus, biceps, mid trapezius, deep abdominals, hip extensors (kneeling stability).',
+    mods: 'Place a pad under the knees. Sit back on the heels for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Front — Hug a Tree',
+    badge: 'classical',
+    purpose: 'Chest fly kneeling variation.',
+    placement: 'Hands in straps, arms extended in front of the chest, palms facing each other.',
+    setup: 'Same setup as Serve a Tray.',
+    cue: '"Open the arms out to a T. Squeeze the chest to bring them home. Slight bend at the elbow."',
+    muscles: 'Pectoralis major, anterior deltoid.',
+    mods: 'Reduce range for shoulder restriction. Reduce spring for smaller clients.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Front — Salute',
+    badge: 'classical',
+    purpose: 'Overhead triceps extension.',
+    placement: 'Hands in a diamond shape at the forehead.',
+    setup: 'Same setup.',
+    cue: '"From the diamond, extend the arms diagonally up and away. Elbows stay lifted."',
+    muscles: 'Triceps brachii, deltoids, deep abdominals.',
+    mods: 'Reduce spring. Do not attempt with active shoulder pain overhead.'
+  }));
+
+  // ARMS FACING FOOTBAR - chest expansion
+  parts.push(_nSeries('Series 6 — Arms Facing Footbar (Kneeling Back)'));
+  parts.push(_nX({
+    name: 'Chest Expansion',
+    badge: 'classical',
+    purpose: 'Posterior arm extension against spring resistance. Opens the chest.',
+    placement: 'Hands hold the arm straps, arms extended in front of the body.',
+    setup: 'Kneeling on the carriage facing the pulleys (facing the shoulder blocks). Springs: 1 red.',
+    cue: '"Exhale, pull the arms straight back to the hips. Look right, look left, look center. Release the arms forward."',
+    muscles: 'Latissimus, posterior deltoid, triceps, deep abdominals.',
+    mods: 'Reduce spring. Place a pad under the knees.'
+  }));
+  parts.push(_nX({
+    name: 'Thigh Stretch',
+    badge: 'classical',
+    purpose: 'Full-body extension trainer. Combines quad stretch with anterior chain length.',
+    placement: 'Hands hold the arm straps low, arms straight down alongside the body.',
+    setup: 'Kneeling on the carriage facing the pulleys. Springs: 1 red.',
+    cue: '"Hinge back from the knees as one piece. Do not break at the hips. Return by squeezing the seat."',
+    muscles: 'Quadriceps, gluteals, spinal extensors, deep abdominals.',
+    mods: 'Reduce hinge angle. Use only 1 blue spring for very small clients.'
+  }));
+
+  // KNEELING & STANDING PLANK SERIES
+  parts.push(_nSeries('Series 7 — Plank Series'));
+  parts.push(_nX({
+    name: 'Knee Stretch — Round',
+    badge: 'classical',
+    purpose: 'Trains deep abdominal engagement in a rounded quadruped position. First exercise of the plank series.',
+    placement: 'Hands on the footbar, shoulder-width. Knees on the carriage under the hips.',
+    setup: 'Kneeling on the carriage, hands on footbar. Springs: 1 to 2 reds.',
+    cue: '"Round the spine. Push the carriage back with the abdominals, pull it home with the abdominals."',
+    muscles: 'Deep abdominals, latissimus, hip flexors.',
+    mods: 'Reduce range. Reduce spring.'
+  }));
+  parts.push(_nX({
+    name: 'Knee Stretch — Arched (Flat)',
+    badge: 'classical',
+    purpose: 'Same pattern in a neutral or slightly extended spine. Adds spinal extensor engagement.',
+    placement: 'Same as Round.',
+    setup: 'Same setup.',
+    cue: '"Long spine, chest lifted. Push the carriage back with the seat, pull it home with the abdominals."',
+    muscles: 'Spinal extensors, gluteals, deep abdominals.',
+    mods: 'Reduce range. Beginner: alternate with Round to feel the difference.'
+  }));
+  parts.push(_nX({
+    name: 'Front Splits',
+    badge: 'classical',
+    purpose: 'Hip flexor and hamstring flexibility. Stretch under spring resistance.',
+    placement: 'Front foot on the footbar, back knee on the carriage.',
+    setup: 'Kneeling on the carriage, one foot on the footbar. Springs: 1 red.',
+    cue: '"Sink toward the front heel. Lift the chest. Back thigh reaches long."',
+    muscles: 'Hip flexors, quadriceps, hamstrings.',
+    mods: 'Pad under back knee. Reduce depth. Hold shoulder blocks for balance.'
+  }));
+  parts.push(_nX({
+    name: 'Back Splits',
+    badge: 'classical',
+    purpose: 'Reverse of Front Splits. Deep hamstring stretch with quad engagement.',
+    placement: 'Front foot on the footbar, back foot on the carriage.',
+    setup: 'Standing lunge on the reformer. Springs: 1 red.',
+    cue: '"Front leg presses long as the carriage moves away. Hips stay square."',
+    muscles: 'Hamstrings, hip flexors, quadriceps.',
+    mods: 'Reduce range. Hold the footbar for balance.'
+  }));
+  parts.push(_nX({
+    name: 'Stomach Massage — Round',
+    badge: 'classical',
+    purpose: 'Seated footwork in a deep C-curve. Introduces upright abdominal-hip flexor coordination.',
+    placement: 'Feet on the footbar in Pilates V, balls of the feet.',
+    setup: 'Seated at the front edge of the carriage, spine in deep C-curve. Hands on the sides of the carriage. Springs: 2 to 3 reds.',
+    cue: '"Round the spine. Press the feet out, keep the shape. Pull the carriage home with the abdominals."',
+    muscles: 'Rectus abdominis, hip flexors, quadriceps.',
+    mods: 'Reduce spring. Hold the sides of the carriage for support.'
+  }));
+  parts.push(_nX({
+    name: 'Stomach Massage — Flat Back',
+    badge: 'classical',
+    purpose: 'Second variation. Trains spinal extension in a seated footwork position.',
+    placement: 'Same as Round.',
+    setup: 'Same setup. Spine now upright and long.',
+    cue: '"Lift the chest, long tall spine. Press out and return without collapsing the back."',
+    muscles: 'Spinal extensors, hip flexors, quadriceps.',
+    mods: 'Reduce spring. Hold hands on the hips or reach forward for balance.'
+  }));
+  parts.push(_nX({
+    name: 'Stomach Massage — Twist (Rotation)',
+    badge: 'classical',
+    purpose: 'Add rotation to the seated footwork. Trains oblique control under load.',
+    placement: 'Same as above.',
+    setup: 'Same setup. Arms lifted overhead or crossed.',
+    cue: '"Press the carriage out. Rotate from the ribcage. Return through center."',
+    muscles: 'Obliques, hip flexors, deep abdominals.',
+    mods: 'Reduce rotation range. Slow the tempo.'
+  }));
+
+  return parts.join('\n');
+}
+
+// ============================================================================
+// SECTION 4: ADVANCED REFORMER 2.0 LEVEL
+// ============================================================================
+
+function generateReformerLevel2Content() {
+  const parts = [];
+  parts.push(`<h2>Advanced Reformer 2.0 — Full Repertoire</h2>
+<div class="level-intro">
+<p>Level 2 is where the reformer becomes a full-body training instrument. These exercises demand precision, control, and body awareness developed through Levels 1 and 1.5. Do not teach these exercises to a client who cannot demonstrate clean neutral pelvis, clean spinal articulation, and confident spring management.</p>
+<p>Every advanced exercise in this section requires spotting and clear verbal setup. When in doubt, cue louder and stand closer.</p>
+</div>`);
+
+  // ARMS IN STRAPS - Kneeling Side Arm Series
+  parts.push(_nSeries('Series 1 — Kneeling Side Arm Series'));
+  parts.push(_nX({
+    name: 'Kneeling Side Arm — Internal Rotation',
+    badge: 'classical',
+    purpose: 'Isolate the shoulder internal rotators against light spring resistance. Foundational move of the side arm series.',
+    placement: 'Kneel sideways on the carriage, closest hand holds the strap, elbow bent at 90 degrees.',
+    setup: 'One knee down on the carriage, one knee lifted with foot on the carriage in a side-kneel. Free hand on hip. Springs: 1 blue or 1 red.',
+    cue: '"Elbow stays glued to the ribs. Rotate the forearm across the body."',
+    muscles: 'Subscapularis, pectoralis, deep abdominals, hip stabilizers.',
+    mods: 'Reduce spring. Half-kneel instead of side-kneel for balance issues.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Side Arm — External Rotation',
+    badge: 'classical',
+    purpose: 'Opposite of internal rotation. Trains the rotator cuff externals.',
+    placement: 'Far hand holds the strap, elbow at 90 degrees.',
+    setup: 'Same side-kneel position.',
+    cue: '"Elbow to the ribs. Forearm rotates away from the body."',
+    muscles: 'Infraspinatus, teres minor, posterior deltoid.',
+    mods: 'Reduce spring. Reduce range.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Side Arm — Overhead Press',
+    badge: 'classical',
+    purpose: 'Overhead shoulder press. Trains deltoid and scapular upward rotation.',
+    placement: 'Closest hand to pulley holds the strap.',
+    setup: 'Same side-kneel.',
+    cue: '"Press the arm straight overhead. Ribs stay knit. Return with control."',
+    muscles: 'Deltoids, upper trapezius, triceps, deep abdominals.',
+    mods: 'Reduce range. Do not press overhead through pain.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Side Arm — Abduction',
+    badge: 'classical',
+    purpose: 'Full-body diagonal abduction pattern. Combines shoulder and trunk work.',
+    placement: 'Far hand holds the strap.',
+    setup: 'Same side-kneel.',
+    cue: '"Sweep the hand from the opposite hip up diagonally to the same-side shoulder, then out to the side."',
+    muscles: 'Deltoids, obliques, deep abdominals.',
+    mods: 'Simplify to shoulder-only abduction for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Kneeling Side Arm — Triceps',
+    badge: 'classical',
+    purpose: 'Overhead triceps extension in a side-kneel.',
+    placement: 'Far hand holds the back strap.',
+    setup: 'Same side-kneel.',
+    cue: '"Elbow reaches for the ceiling. Extend the arm long. Return under control."',
+    muscles: 'Triceps brachii, deep abdominals.',
+    mods: 'Reduce range for tight shoulders. Do not attempt with cranky shoulders.'
+  }));
+
+  // SIDE LYING
+  parts.push(_nSeries('Series 2 — Side Lying'));
+  parts.push(_nX({
+    name: 'Side-Lying Feet in Straps — Front &amp; Back',
+    badge: 'classical',
+    purpose: 'Trains hip flexion and extension in side-lying under spring resistance.',
+    placement: 'Feet in straps, bottom arm long overhead as a pillow.',
+    setup: 'Side-lying on the carriage, hips stacked, top leg in the strap. Springs: 1 blue or 1 red.',
+    cue: '"Top leg reaches long forward, then long behind. Ribs stay stacked."',
+    muscles: 'Hip flexors, hip extensors, gluteus medius, obliques.',
+    mods: 'Head support with a pad. Reduce range.'
+  }));
+  parts.push(_nX({
+    name: 'Side-Lying Feet in Straps — Up &amp; Down',
+    badge: 'classical',
+    purpose: 'Abduction under spring load.',
+    placement: 'Same as above.',
+    setup: 'Same side-lying setup.',
+    cue: '"Lift the top leg to the ceiling, control the return. No hip rolling."',
+    muscles: 'Gluteus medius, gluteus maximus, deep abdominals.',
+    mods: 'Reduce spring. Bend bottom knee for stability.'
+  }));
+
+  // LONG BOX
+  parts.push(_nSeries('Series 3 — Long Box (Advanced)'));
+  parts.push(_nX({
+    name: 'Hamstring Curl',
+    badge: 'contemporary',
+    purpose: 'Isolate the hamstrings against spring resistance. Contemporary addition, widely taught.',
+    placement: 'Feet in small Velcro cuffs (or arm straps if cuffs are unavailable), one foot per cuff.',
+    setup: 'Long box on carriage. Prone on the box facing footbar, hips over front edge, arms crossed in front of the box for support. Springs: 1 red.',
+    cue: '"Exhale, bend the knees and curl the heels toward the seat. Pelvis stays stable."',
+    muscles: 'Hamstrings, gluteals, deep abdominals.',
+    mods: 'Do one leg at a time. Reduce spring for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Breast Stroke (Full)',
+    badge: 'classical',
+    purpose: 'Full expression of Breast Stroke Prep. Adds thoracic extension.',
+    placement: 'Hands in the arm straps, elbows bent at start.',
+    setup: 'Prone on long box facing footbar. Springs: 1 blue.',
+    cue: '"Exhale, sweep the arms overhead and lift the chest into extension. Inhale, circle the arms wide and lower with control."',
+    muscles: 'Spinal extensors, gluteals, posterior deltoid, mid trapezius.',
+    mods: 'Skip the thoracic extension for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Backstroke',
+    badge: 'classical',
+    purpose: 'Combined abdominal, arm, and leg work in supine on the long box. One of the most demanding exercises in the repertoire.',
+    placement: 'Hands in arm straps, feet in tabletop with knees over hips.',
+    setup: 'Supine on the long box, facing the footbar, head at the front edge of the box, legs in tabletop. Springs: 1 blue.',
+    cue: '"Curl the head and chest up into a diamond. Extend the arms and legs long. Circle around. Return."',
+    muscles: 'Rectus abdominis, obliques, hip flexors, latissimus, triceps.',
+    mods: 'Skip the leg or arm extension. Reduce curl height. Requires strong ab prep first.'
+  }));
+  parts.push(_nX({
+    name: 'Teaser on the Box',
+    badge: 'classical',
+    purpose: 'Full-expression teaser on the long box. Trains full V-sit strength.',
+    placement: 'Hands in arm straps, arms extended back overhead over the box.',
+    setup: 'Supine on the long box facing footbar, legs resting actively on the edges of the box, footbar down. Springs: 1 blue.',
+    cue: '"Sweep the arms around as the spine and hips lift into a V-sit. Arms and legs reach out. Articulate down."',
+    muscles: 'Rectus abdominis, hip flexors, deep abdominals, latissimus.',
+    mods: 'Reduce lift height. Bend the knees. Requires strong Ab Prep and Teaser Prep first.'
+  }));
+  parts.push(_nX({
+    name: 'Pulling T-Straps',
+    badge: 'classical',
+    purpose: 'Advanced posterior chain. Combines Pulling Straps position with abduction.',
+    placement: 'Hands in the arm straps, elbows soft at start.',
+    setup: 'Prone on the long box facing the headrest. Perform Pulling Straps first. Springs: 1 red.',
+    cue: '"Hold the thoracic extension. Inhale, sweep the arms straight out to a T. Exhale, adduct them back to the hips."',
+    muscles: 'Posterior deltoid, mid trapezius, spinal extensors.',
+    mods: 'Reduce range. Reduce spring for smaller clients.'
+  }));
+
+  // ROWING
+  parts.push(_nSeries('Series 4 — Pilates Back Rowing'));
+  parts.push(_nX({
+    name: 'Pilates Back Rowing 1',
+    badge: 'classical',
+    purpose: 'Advanced seated rowing with spinal articulation. Combines abdominal scoop with arm sweep.',
+    placement: 'Hands in the arm straps.',
+    setup: 'Long sit on the carriage facing the headrest (feet toward the footbar). Springs: 1 blue.',
+    cue: '"Inhale, prepare. Exhale, scoop into a deep C-curve and pull the hands to the breastbone. Inhale, extend the elbows. Exhale, flex forward, arms rotate behind, then sweep around into butterfly. Pause hands on shins. Return to long sit."',
+    muscles: 'Rectus abdominis, latissimus, mid trapezius, hip flexors.',
+    mods: 'Break the sequence into parts. Learn the C-curve scoop first, then add the arm sequence.'
+  }));
+  parts.push(_nX({
+    name: 'Pilates Back Rowing 2',
+    badge: 'classical',
+    purpose: 'Rolling variation of Back Rowing. Trains articulated roll-down and lift.',
+    placement: 'Hands in the arm straps.',
+    setup: 'Same long sit setup. Springs: 1 blue.',
+    cue: '"Inhale, bend the elbows. Exhale, roll down bringing the arms to the sides. Inhale, pause. Exhale, lift the body flexing at the hips, arms overhead. Lower arms back to long sit."',
+    muscles: 'Abdominals, hip flexors, spinal flexors, latissimus.',
+    mods: 'Reduce lift height. Requires excellent abdominal strength.'
+  }));
+
+  // STANDING / PLANK ADVANCED
+  parts.push(_nSeries('Series 5 — Standing &amp; Plank (Advanced)'));
+  parts.push(_nX({
+    name: 'Long Stretch',
+    badge: 'classical',
+    purpose: 'Standing plank on the reformer. Foundation of the advanced plank series.',
+    placement: 'Hands on the footbar, feet on the carriage against the shoulder blocks.',
+    setup: 'Standing prone plank facing the springs. Springs: 1 to 2 reds.',
+    cue: '"Long spine, one straight line from ears to heels. Push the carriage away with the shoulders. Pull it home the same way. No bounce."',
+    muscles: 'Deep abdominals, shoulders, triceps, gluteals, hip flexors.',
+    mods: 'Reduce range. Increase spring for more stability. Do not attempt if the client cannot hold a mat plank.'
+  }));
+  parts.push(_nX({
+    name: 'Down Stretch',
+    badge: 'classical',
+    purpose: 'Plank series continuation. Trains spinal extension in the plank position.',
+    placement: 'Hands on the footbar, knees on the carriage against the shoulder blocks.',
+    setup: 'Kneeling on the carriage, hips lifted, spine in extension. Springs: 1 red.',
+    cue: '"Chest lifts, hips press forward. Push and pull the carriage without breaking the shape."',
+    muscles: 'Spinal extensors, hip flexors, quads, latissimus.',
+    mods: 'Reduce range. Reduce spring. Requires clean Elephant first.'
+  }));
+  parts.push(_nX({
+    name: 'Up Stretch',
+    badge: 'classical',
+    purpose: 'Full plank-to-pike transition. Trains transitions between spine extension, plank, and flexion.',
+    placement: 'Hands on footbar, feet on the carriage.',
+    setup: 'Standing prone plank. Springs: 1 red.',
+    cue: '"From plank, push the carriage back and press the hips up into a pike. Return through plank. Elephant home."',
+    muscles: 'Deep abdominals, latissimus, hip flexors, gluteals.',
+    mods: 'Reduce the pike height. Break into two exercises for beginners.'
+  }));
+  parts.push(_nX({
+    name: 'Long Back Stretch',
+    badge: 'classical',
+    purpose: 'Reverse plank on the reformer. One of the most demanding upper body exercises in the repertoire.',
+    placement: 'Hands on the footbar behind the body, feet on the footbar.',
+    setup: 'Seated on the carriage facing away from the footbar, reverse plank shape. Springs: 1 red.',
+    cue: '"Press the carriage away from the footbar with straight arms. Pull it home. Hips stay lifted."',
+    muscles: 'Triceps, shoulder extensors, deep abdominals, gluteals, hamstrings.',
+    mods: 'Do not attempt with wrist injuries. Reduce range. Requires excellent shoulder stability.'
+  }));
+  parts.push(_nX({
+    name: 'Control Balance',
+    badge: 'classical',
+    purpose: 'Prone plank with feet elevated on the footbar. Advanced plank variation.',
+    placement: 'Hands on the shoulder blocks, feet on the footbar.',
+    setup: 'Prone plank facing the headrest, feet on the footbar, hands on the shoulder rests. Springs: 1 red.',
+    cue: '"Long spine, one straight line. Press from the shoulders to move the carriage away. Return with control."',
+    muscles: 'Deep abdominals, shoulders, triceps, gluteals.',
+    mods: 'Requires clean Long Stretch first. Do not attempt with shoulder impingement.'
+  }));
+
+  // SIDE ARM / STANDING SIDE
+  parts.push(_nSeries('Series 6 — Standing Side / Mermaid'));
+  parts.push(_nX({
+    name: 'Mermaid',
+    badge: 'classical',
+    purpose: 'Seated lateral flexion and rotation with spring assistance.',
+    placement: 'One hand on the footbar, legs folded in mermaid position or modified cross-legged.',
+    setup: 'Seated sideways on the carriage. Springs: 1 red.',
+    cue: '"Inhale, side bend as the arm reaches overhead. Exhale to straighten. Add rotation as flexibility increases."',
+    muscles: 'Obliques, lateral trunk, quadratus lumborum.',
+    mods: 'Modified cross-legged for tight hips. Reduce range.'
+  }));
+  parts.push(_nX({
+    name: 'Side Split Series — Abduction',
+    badge: 'classical',
+    purpose: 'Standing abduction under spring load. Signature standing exercise on the reformer.',
+    placement: 'One foot on the carriage, one foot on the sitting platform.',
+    setup: 'Standing on the reformer, hands on hips or extended out to sides. Springs: start with 1 red, progress to 2 reds.',
+    cue: '"Press both feet out equally. No pelvic tilt. Return by squeezing the inner thighs."',
+    muscles: 'Adductors, abductors, gluteus medius, deep abdominals.',
+    mods: 'Reduce spring. Reduce range. Hold the shoulder blocks with the hands for balance.'
+  }));
+  parts.push(_nX({
+    name: 'Side Split Series — Adduction',
+    badge: 'classical',
+    purpose: 'Reverse of abduction. Trains adductor strength.',
+    placement: 'Same as abduction.',
+    setup: 'Same setup. Springs: 1 blue (adduction can even be done with no springs for advanced clients).',
+    cue: '"Inhale, press out with both legs. Exhale, squeeze the inner thighs to pull the carriage back in."',
+    muscles: 'Adductors, deep abdominals.',
+    mods: 'Reduce range. Increase spring for beginners for more support.'
+  }));
+
+  // STANDING / SNAKE
+  parts.push(_nSeries('Series 7 — Standing (Twist)'));
+  parts.push(_nX({
+    name: 'Twist (Snake)',
+    badge: 'classical',
+    purpose: 'The most advanced standing exercise in the classical repertoire. Combines rotation, extension, and full-body control.',
+    placement: 'One hand on the far shoulder rest, opposite hand on the back edge of the carriage. Feet crossed on the footbar.',
+    setup: 'Stand facing the reformer. Place the left hand on the far shoulder rest, right foot on the footbar. Place the right hand on the back edge of the carriage near the springs. Cross the left foot over the right. Hips piked, head down. Springs: 1 red.',
+    cue: '"Inhale, press the carriage away. Exhale, engage the abdominals to pike the hips home. Never attempt without a spotter."',
+    muscles: 'Obliques, shoulders, deep abdominals, spinal rotators.',
+    mods: '<strong>Do not attempt without an experienced spotter.</strong> Requires clean Long Stretch, Mermaid, and Side Split Series first.'
+  }));
+
+  return parts.join('\n');
+}
+
+// ============================================================================
+// SECTION 5: JUMPBOARD
+// ============================================================================
+
+function generateReformerJumpboardContent() {
+  const parts = [];
+  parts.push(`<h2>Jumpboard — Horizontal Cardio Training</h2>
+<div class="level-intro">
+<p>The jumpboard turns the reformer into a horizontal cardio trampoline. Because the body is supine and the spring absorbs impact, jumpboard delivers cardiovascular training with virtually no joint compression. It is the closest thing Pilates has to plyometric training.</p>
+<p><strong>Universal rules:</strong></p>
+<ul>
+<li>Land toe-ball-heel every single jump. Never flat-footed.</li>
+<li>Always land with a slightly bent knee. Never lock out.</li>
+<li>Pelvis stays neutral or lightly imprinted. Never let the low back arch away from the carriage.</li>
+<li>Springs: 2 to 3 reds for most exercises. Adjust for client size.</li>
+<li>Do not teach jumpboard to a client who has not mastered footwork.</li>
+</ul>
+</div>`);
+
+  parts.push(_nSeries('Series 1 — Foundation Jumps'));
+  parts.push(_nX({
+    name: 'Parallel Jumps — Feet Together',
+    badge: 'contemporary',
+    purpose: 'The first jump. Establishes rhythm, landing mechanics, and spring timing.',
+    placement: 'Feet parallel and together in the middle of the board.',
+    setup: 'Supine on the carriage, head on headrest, arms by sides. Springs: 2 to 3 reds.',
+    cue: '"Toe, ball, heel every time. Push off both feet equally. Land soft."',
+    muscles: 'Quadriceps, gluteals, calves, deep abdominals.',
+    mods: 'Reduce spring for beginners. Reduce range of jump. Short sets to build the pattern.'
+  }));
+  parts.push(_nX({
+    name: 'Parallel Jumps — Feet Apart',
+    badge: 'contemporary',
+    purpose: 'Widen the base. Adds inner thigh stabilization.',
+    placement: 'Feet parallel, hip-distance or slightly wider.',
+    setup: 'Same supine setup.',
+    cue: '"Track knees over second toes. Same soft landing."',
+    muscles: 'Quadriceps, gluteals, adductors.',
+    mods: 'Reduce spring. Reduce jump height.'
+  }));
+  parts.push(_nX({
+    name: 'Turn Out Jumps — Feet Together',
+    badge: 'contemporary',
+    purpose: 'Classical Pilates V under jump load. Trains external rotators.',
+    placement: 'Heels together in Pilates V, balls of the feet in a small turn out.',
+    setup: 'Same setup.',
+    cue: '"Squeeze the heels together at the top of each jump."',
+    muscles: 'Quads, gluteals, adductors, deep external rotators.',
+    mods: 'Reduce jump height for stiff hips.'
+  }));
+  parts.push(_nX({
+    name: 'Turn Out Jumps — Feet Apart',
+    badge: 'contemporary',
+    purpose: 'Wide second position with turnout.',
+    placement: 'Feet wider than hip-distance, small turnout.',
+    setup: 'Same setup.',
+    cue: '"Track knees over pinky toes. Land soft."',
+    muscles: 'Quads, gluteals, adductors, external rotators.',
+    mods: 'Reduce range.'
+  }));
+
+  parts.push(_nSeries('Series 2 — Coordination Jumps'));
+  parts.push(_nX({
+    name: 'Single Leg Jumps',
+    badge: 'contemporary',
+    purpose: 'One leg trains balance and strength unilaterally. Reveals side dominance instantly.',
+    placement: 'One foot in the middle of the board, other leg extended or in tabletop.',
+    setup: 'Same supine setup. Springs: 2 reds.',
+    cue: '"Same toe-ball-heel. Non-jumping leg stays still."',
+    muscles: 'Full lower body of the working leg, deep abdominals.',
+    mods: 'Reduce spring. Rest between sides. Alternate between legs mid-set.'
+  }));
+  parts.push(_nX({
+    name: 'Prancing (Alternating Feet)',
+    badge: 'contemporary',
+    purpose: 'Trains alternating leg mechanics like running in place.',
+    placement: 'Feet parallel, hip-distance.',
+    setup: 'Same setup.',
+    cue: '"One heel presses down as the other lifts. Even, rhythmic, no bouncing pelvis."',
+    muscles: 'Calves, quadriceps, gluteals, deep abdominals.',
+    mods: 'Slow the tempo. Reduce spring.'
+  }));
+  parts.push(_nX({
+    name: 'Skiing (Both Feet Side to Side)',
+    badge: 'contemporary',
+    purpose: 'Adds lateral movement to the jump. Trains oblique and hip stabilizer coordination.',
+    placement: 'Feet together.',
+    setup: 'Same supine setup.',
+    cue: '"Both feet land right, both feet land left. Head stays still on the headrest."',
+    muscles: 'Obliques, gluteus medius, adductors.',
+    mods: 'Reduce lateral range. Reduce spring.'
+  }));
+  parts.push(_nX({
+    name: 'Kicking (Alternating Front Kick)',
+    badge: 'contemporary',
+    purpose: 'Adds front kick to alternate legs. Builds hip flexor stamina.',
+    placement: 'One foot on the board, other kicks toward the ceiling.',
+    setup: 'Same setup.',
+    cue: '"Kick straight up, then land with a soft knee."',
+    muscles: 'Hip flexors, quads, gluteals, deep abdominals.',
+    mods: 'Reduce kick height. Rest between sides.'
+  }));
+
+  parts.push(_nSeries('Series 3 — Advanced Jumps'));
+  parts.push(_nX({
+    name: 'Wide-to-Narrow Jumps',
+    badge: 'contemporary',
+    purpose: 'Combines Parallel Apart and Parallel Together in one set. Coordination challenge.',
+    placement: 'Feet alternate wide and narrow.',
+    setup: 'Same setup.',
+    cue: '"Land wide, land narrow. Alternate every jump."',
+    muscles: 'Adductors, abductors, quads, gluteals.',
+    mods: 'Slow the tempo. Reduce range.'
+  }));
+  parts.push(_nX({
+    name: 'Jumping Jacks',
+    badge: 'contemporary',
+    purpose: 'Combines lateral movement with arm coordination.',
+    placement: 'Feet parallel together, arms alongside body or lifted.',
+    setup: 'Same setup.',
+    cue: '"Feet jump apart, arms sweep out. Feet together, arms return. Land soft."',
+    muscles: 'Quads, gluteals, adductors, shoulders.',
+    mods: 'Skip the arm movement to focus on legs. Reduce range.'
+  }));
+  parts.push(_nX({
+    name: 'Twist Jumps (Rotation)',
+    badge: 'contemporary',
+    purpose: 'Rotational jump. Trains oblique control under impact.',
+    placement: 'Feet together, knees rotate side to side while feet stay parallel.',
+    setup: 'Same setup, knees in tabletop before starting.',
+    cue: '"Rotate the knees to the right on landing, then to the left. Ribs stay knit."',
+    muscles: 'Obliques, deep abdominals, adductors.',
+    mods: 'Reduce rotation range. Slow the tempo.'
+  }));
+  parts.push(_nX({
+    name: 'Single Leg Turn Out',
+    badge: 'contemporary',
+    purpose: 'Single-leg jump with turnout. Advanced coordination.',
+    placement: 'One foot on the board, turned out.',
+    setup: 'Same supine setup. Springs: 2 reds.',
+    cue: '"Same soft landing. Non-jumping leg stays turned out and still."',
+    muscles: 'Quads, gluteals, external rotators.',
+    mods: 'Reduce range. Rest often.'
+  }));
+  parts.push(_nX({
+    name: 'Jumps with Ab Curl',
+    badge: 'contemporary',
+    purpose: 'Combines jump with abdominal curl. Trains simultaneous upper and lower body work.',
+    placement: 'Feet parallel, hands behind head.',
+    setup: 'Same supine setup. Headrest up.',
+    cue: '"Curl the head and chest up as the feet jump out. Return together."',
+    muscles: 'Rectus abdominis, hip flexors, quads.',
+    mods: 'Keep the head down for cervical issues. Reduce jump range.'
+  }));
+  parts.push(_nX({
+    name: 'Long Leg Jumps (Straight Leg)',
+    badge: 'contemporary',
+    purpose: 'Jump with legs at 45 or 90 degrees. Advanced hip flexor and abdominal challenge.',
+    placement: 'Feet at 45 degrees or higher.',
+    setup: 'Springs: 2 reds. Legs are straight throughout the jump.',
+    cue: '"Legs jump like scissors — no bending at the knees."',
+    muscles: 'Hip flexors, quadriceps, deep abdominals.',
+    mods: 'Reduce leg height (start at 90 degrees). Keep sets short.'
+  }));
+
+  return parts.join('\n');
+}
+
+// ============================================================================
+// SECTION 6: CLASS FLOWS
+// ============================================================================
 
 function generateClassFlowsContent() {
   return `<h2>Three Example Class Flows</h2>
-<p>Each flow starts with footwork, includes a plank series, and ends with feet in straps.</p>
+<p>These flows demonstrate how the classical sequence progresses across levels. Each flow starts with footwork, includes a plank/kneeling series, and ends with feet in straps for restorative closure.</p>
 
 <div class="class-flow">
-<h4>Class 1: Beginner Flow (45 minutes)</h4>
-<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork Series</strong> — 4 springs. Toes, Arches, Heels, Tendon Stretch (10 reps each). <em>8 min</em>. Cue: "Press evenly through all toes."</div></div>
-<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>Hundred</strong> — 3 springs. Knees in tabletop modification. <em>3 min</em>. Cue: "Heavy shoulders, pumping arms."</div></div>
-<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Coordination</strong> — 2 springs. 6 reps. <em>3 min</em>. Cue: "Open-close before you bend."</div></div>
-<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Rowing Front 1 & 2</strong> — 1 spring. 4 reps each. <em>5 min</em>. Transition: turn to face footbar.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Long Box: Pull Straps 1 & 2</strong> — 1 spring. 5 reps each. <em>4 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Short Box: Round & Flat Back</strong> — 2 springs. 4 reps each. <em>5 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Knee Stretches — Round</strong> — 2 springs. 8 reps. <em>Plank series begins.</em> <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Elephant</strong> — 2 springs. 6 reps. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Feet in Straps: Frogs & Leg Circles</strong> — 2 springs. 8 reps each. <em>5 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">10</span><div><strong>Running</strong> — 3 springs. 20 alternations. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">11</span><div><strong>Pelvic Lift</strong> — 3 springs. 5 reps. <em>2 min</em>. Cue: "Peel your spine off one bone at a time."</div></div>
+<h4>Class 1: Level 1 Foundation Flow (45 minutes)</h4>
+<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork Series (Classical)</strong> — 3 to 4 reds. Toes, Arches, Heels, Tendon Stretch, Running (10 reps each). <em>10 min</em>. Cue: "Press evenly through both feet. Neutral pelvis."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>Ab Prep</strong> — 2 reds with footbar. 8 reps. <em>3 min</em>. Cue: "Ribs to hips. Eyes to belly button."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Arm Circle Series (Supine)</strong> — 1 blue. Lower &amp; lift, circles, triceps press. 5 reps each. <em>5 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Lunge (Kneeling Runner)</strong> — 1 red. 6 reps each side. <em>5 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Elephant</strong> — 1 to 2 reds. 8 reps. <em>4 min</em>. Cue: "Push with the abs, pull with the abs."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Breast Stroke Prep (Long Box)</strong> — 1 blue. 6 reps. <em>4 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Pelvic Lift Prep</strong> — 2 to 3 reds. 6 reps. <em>3 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Feet in Straps — Frogs &amp; Circles</strong> — 1 red. 8 reps frogs, 5 circles each direction. <em>7 min</em>. Cue: "Pelvis stays glued to the carriage."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Seated Forward Fold Closure</strong> — 1 blue. 3 breaths. <em>4 min</em>.</div></div>
 </div>
 
 <div class="class-flow">
-<h4>Class 2: Intermediate Flow (55 minutes)</h4>
-<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork — Full Series</strong> — 4 springs. Toes, Arches, Heels, Tendon, Wide Stance. <em>10 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>Hundred</strong> — 3 springs. Full expression legs at 45°. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Coordination</strong> — 2 springs. 8 reps. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Rowing Front & Back</strong> — 1 spring. Full series. <em>7 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Long Box: Swan, Pull Straps 1 & 2, Backstroke</strong> — 1 spring. <em>7 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Short Box: Round, Flat, Side-to-Side, Twist, Tree</strong> — 2 springs. <em>8 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Knee Stretches — Round & Arched</strong> — 2 springs. <em>Plank series.</em> <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Long Stretch, Down Stretch, Up Stretch</strong> — 1–2 springs. <em>5 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Chest Expansion & Thigh Stretch</strong> — 2 springs. <em>4 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">10</span><div><strong>Feet in Straps: Frogs, Circles, Short Spine Massage</strong> — 1–2 springs. <em>7 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">11</span><div><strong>Semi-Circle</strong> — 2 springs. 3 reps each direction. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">12</span><div><strong>Running & Pelvic Lift</strong> — 3 springs. <em>5 min</em>.</div></div>
+<h4>Class 2: Level 1.5 Intermediate Flow (55 minutes)</h4>
+<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork — Full Classical + Wide Second</strong> — 3 to 4 reds. <em>10 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>The Hundred</strong> — 1 red. Full expression, legs at 45. <em>3 min</em>. Cue: "Long past the hips. Ribs heavy."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Coordination</strong> — 1 red. 8 reps. <em>3 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Seated Back Rowing — Low, High, Biceps</strong> — 1 red. 6 reps each. <em>7 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Long Box: Pulling Straps 1 &amp; 2</strong> — 1 red. 6 reps each. <em>5 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Short Box: Round, Flat, Side-to-Side, Twist, Tree</strong> — 2 reds (carriage stable). Full series. <em>10 min</em>. Cue: "Feet anchored. Move from the ribcage."</div></div>
+<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Kneeling Front Series (Serve a Tray, Hug a Tree, Salute)</strong> — 1 red. 6 reps each. <em>5 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Chest Expansion &amp; Thigh Stretch</strong> — 1 red. 6 reps each. <em>4 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Knee Stretch — Round &amp; Flat</strong> — 2 reds. Plank series entry. <em>3 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">10</span><div><strong>Stomach Massage — Round &amp; Flat Back</strong> — 3 reds. 6 reps each. <em>4 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">11</span><div><strong>Feet in Straps — Long Spine &amp; Short Spine</strong> — 1 red + 1 blue. 3 reps each. <em>5 min</em>. Spot each rep.</div></div>
 </div>
 
 <div class="class-flow">
-<h4>Class 3: Advanced Flow (60 minutes)</h4>
-<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork — Full Series + Single Leg</strong> — 4 springs. <em>10 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>Hundred</strong> — 3 springs. Full expression. <em>2 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Overhead / Jackknife</strong> — 2 springs. 3 reps. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Coordination</strong> — 2 springs. 10 reps. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Rowing — Full Series Front & Back + Hug/Shave</strong> — 1 spring. <em>8 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Long Box: Swan, Pull Straps, Backstroke, Teaser</strong> — 1 spring. <em>7 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Short Box: Full Series + Around the World</strong> — 2 springs. <em>7 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Knee Stretches — Round, Arched, Knees Off</strong> — 2 springs. <em>Plank series.</em> <em>4 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Long Stretch, Down Stretch, Up Stretch, Long Back Stretch</strong> — 1–2 springs. <em>6 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">10</span><div><strong>Chest Expansion, Thigh Stretch, Backbend</strong> — 2 springs. <em>4 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">11</span><div><strong>Feet in Straps: Frogs, Circles, Long Spine, Short Spine</strong> — 1 spring. <em>8 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">12</span><div><strong>Side Splits</strong> — 1 spring. 6 reps. <em>3 min</em>.</div></div>
-<div class="class-flow-step"><span class="class-flow-num">13</span><div><strong>Running & Pelvic Lift</strong> — 3 springs. <em>5 min</em>.</div></div>
-</div>`;
+<h4>Class 3: Level 2 Advanced Flow (60 minutes)</h4>
+<div class="class-flow-step"><span class="class-flow-num">1</span><div><strong>Footwork — Full + Single Leg</strong> — 3 to 4 reds. <em>10 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">2</span><div><strong>Hundred — Full Expression</strong> — 1 red. <em>2 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">3</span><div><strong>Coordination + Backstroke Prep</strong> — 1 blue. 8 reps each. <em>4 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">4</span><div><strong>Pilates Back Rowing 1 &amp; 2</strong> — 1 blue. 3 reps each sequence. <em>7 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">5</span><div><strong>Long Box: Pulling Straps → T-Straps → Breast Stroke → Backstroke → Teaser on the Box</strong> — 1 blue for most, 1 red for pulling straps. <em>10 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">6</span><div><strong>Short Box: Full Series + Around the World</strong> — 2 reds. <em>7 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">7</span><div><strong>Kneeling Side Arm Series (Full 5 variations)</strong> — 1 blue. <em>6 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">8</span><div><strong>Plank Series: Long Stretch → Down Stretch → Up Stretch → Long Back Stretch → Control Balance</strong> — 1 red. <em>7 min</em>.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">9</span><div><strong>Standing: Mermaid, Side Splits (Ab &amp; Ad), Snake/Twist</strong> — 1 to 2 reds. <em>5 min</em>. Spot Snake every time.</div></div>
+<div class="class-flow-step"><span class="class-flow-num">10</span><div><strong>Feet in Straps — Long Spine, Short Spine, Circles</strong> — 1 red. Closure. <em>2 min</em>.</div></div>
+</div>
+
+<h3>How to Sequence Your Own Class</h3>
+<p>Every well-built reformer class follows the same shape:</p>
+<ol>
+<li><strong>Footwork opener</strong> — warms the body, connects to breath, establishes neutral pelvis.</li>
+<li><strong>Supine core work</strong> — Hundred, Coordination, ab prep patterns.</li>
+<li><strong>Seated or rowing series</strong> — introduces upper body strength.</li>
+<li><strong>Long Box</strong> — prone extension and supine advanced work.</li>
+<li><strong>Short Box</strong> — seated abdominal, side, and rotation work.</li>
+<li><strong>Kneeling series</strong> — arms and thigh stretch.</li>
+<li><strong>Plank / standing</strong> — the strength climax of class.</li>
+<li><strong>Stomach Massage or feet in straps</strong> — seated or supine closure.</li>
+<li><strong>Stretch and finish</strong> — hamstring stretch, side splits, or breath.</li>
+</ol>
+<p><strong>Pacing rule of thumb:</strong> Match spring changes to natural transitions. Never make a client hold a spring change during exertion. Keep talking. Cue the next setup while they finish the last rep.</p>
+`;
 }
+
 
 // ===== QUIZ GENERATORS =====
 
