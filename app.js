@@ -8410,8 +8410,18 @@ async function loadAdminHomeworkInbox() {
             <label style="display:block;font-size:0.85rem;color:#6a5d4d;margin-bottom:4px;">Label (optional)</label>
             <input id="numa-ec-new-label" type="text" placeholder="e.g. Spring 2027 cohort" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;">
           </div>
+          <div style="flex:1;min-width:200px;">
+            <label style="display:block;font-size:0.85rem;color:#6a5d4d;margin-bottom:4px;">Pathway</label>
+            <select id="numa-ec-new-pathway" style="width:100%;padding:10px;border:1px solid #e6dfd1;border-radius:8px;background:#fff;">
+              <option value="">— Assign later —</option>
+              <option value="mat">Mat Only</option>
+              <option value="reformer">Reformer Only</option>
+              <option value="both">Mat + Reformer</option>
+            </select>
+          </div>
           <button class="btn btn-primary" onclick="numaEnrollmentCreate()"><i class="fa-solid fa-plus"></i> Add Code</button>
         </div>
+        <p style="margin-top:10px;font-size:0.85rem;color:#8a7e6d;">The pathway you pick is automatically assigned to every student who registers with this code.</p>
       </div></div>
 
       <div class="card slide-up" style="margin-top:20px;"><div class="card-body">
@@ -8442,12 +8452,22 @@ async function loadAdminHomeworkInbox() {
       wrap.innerHTML = '<p class="text-muted">No enrollment codes yet. Add one above.</p>';
       return;
     }
-    let html = '<table class="admin-table"><thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Students</th><th style="text-align:right;">Actions</th></tr></thead><tbody>';
+    // Pretty-print pathway slug (mat/reformer/both/custom-slug -> label)
+    function pathwayLabel(slug) {
+      if (!slug) return '<span style="color:#c62828;">Not set</span>';
+      if (slug === 'mat') return '<span class="badge" style="background:#f3e5f5;color:#6a1b9a;">Mat Only</span>';
+      if (slug === 'reformer') return '<span class="badge" style="background:#e3f2fd;color:#1565c0;">Reformer Only</span>';
+      if (slug === 'both') return '<span class="badge" style="background:#e8f5e9;color:#2e7d32;">Mat + Reformer</span>';
+      return `<span class="badge" style="background:#f5efe4;color:#6a5d4d;">${esc(String(slug).replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase()))}</span>`;
+    }
+
+    let html = '<table class="admin-table"><thead><tr><th>Code</th><th>Label</th><th>Pathway</th><th>Status</th><th>Students</th><th style="text-align:right;">Actions</th></tr></thead><tbody>';
     for (const r of rows) {
       const active = r.is_active !== false;
       html += `<tr data-code="${esc(r.code)}">
         <td><strong style="font-family:monospace;font-size:1.05rem;letter-spacing:2px;color:#A38D78;">${esc(r.code)}</strong></td>
         <td>${esc(r.label || '')}</td>
+        <td>${pathwayLabel(r.pathway)}</td>
         <td>${active
           ? '<span class="badge badge-complete" style="background:#e8f5e9;color:#2e7d32;">Active</span>'
           : '<span class="badge" style="background:#f5efe4;color:#6a5d4d;">Disabled</span>'}</td>
@@ -8468,22 +8488,38 @@ async function loadAdminHomeworkInbox() {
   window.numaEnrollmentCreate = async function() {
     const codeEl = document.getElementById('numa-ec-new-code');
     const labelEl = document.getElementById('numa-ec-new-label');
+    const pathwayEl = document.getElementById('numa-ec-new-pathway');
     const code = (codeEl?.value || '').toUpperCase().trim();
     const label = (labelEl?.value || '').trim();
+    const pathway = (pathwayEl?.value || '').trim();
     if (!code) { alert('Enter a code first.'); return; }
-    const res = await api('/api/admin/enrollment-codes', { method: 'POST', body: JSON.stringify({ code, label }) });
+    const res = await api('/api/admin/enrollment-codes', { method: 'POST', body: JSON.stringify({ code, label, pathway }) });
     if (!res || res.error) { alert(res?.error || 'Could not create code.'); return; }
-    codeEl.value = ''; labelEl.value = '';
+    codeEl.value = ''; labelEl.value = ''; if (pathwayEl) pathwayEl.value = '';
     loadEnrollmentCodes();
   };
 
   window.numaEnrollmentEdit = async function(oldCode) {
-    const newCode = prompt('Rename code (letters/numbers). Leave the same to only edit the label:', oldCode);
+    // Look up current row so we can pre-fill
+    const all = await api('/api/admin/enrollment-codes');
+    const row = Array.isArray(all) ? all.find(r => r.code === oldCode) : null;
+    const curLabel = row?.label || '';
+    const curPathway = row?.pathway || '';
+
+    const newCode = prompt('Rename code (letters/numbers). Leave the same to keep it:', oldCode);
     if (newCode === null) return;
-    const newLabel = prompt('Label for this code (optional):', '');
+    const newLabel = prompt('Label for this code (optional):', curLabel);
     if (newLabel === null) return;
-    const body = { code: newCode.toUpperCase().trim() };
-    if (newLabel.trim() !== '') body.label = newLabel.trim();
+    const newPathway = prompt(
+      'Pathway for this code — one of:\n\n  mat       (Mat Only)\n  reformer  (Reformer Only)\n  both      (Mat + Reformer)\n\nLeave blank to clear.',
+      curPathway
+    );
+    if (newPathway === null) return;
+    const body = {
+      code: newCode.toUpperCase().trim(),
+      label: newLabel.trim(),
+      pathway: newPathway.trim().toLowerCase()
+    };
     const res = await api('/api/admin/enrollment-codes/' + encodeURIComponent(oldCode), { method: 'PATCH', body: JSON.stringify(body) });
     if (!res || res.error) { alert(res?.error || 'Could not update code.'); return; }
     loadEnrollmentCodes();

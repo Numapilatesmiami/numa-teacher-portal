@@ -168,15 +168,17 @@ app.post('/api/auth/register', async (req, res) => {
       [enrollmentCode.toUpperCase().trim()]
     );
     if (codeRes.rowCount === 0) return res.status(400).json({ error: 'Invalid enrollment code' });
+    const codePathway = codeRes.rows[0].pathway || null;
 
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
     if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
 
     const hash = await bcrypt.hash(password, 10);
+    // Assign the pathway attached to the enrollment code so the student lands in the right track automatically.
     const result = await pool.query(
-      `INSERT INTO users (username, password_hash, full_name, email, enrollment_code, role)
-       VALUES ($1, $2, $3, $4, $5, 'student') RETURNING id, username, full_name, email, role`,
-      [username.trim(), hash, fullName.trim(), email.trim(), enrollmentCode.toUpperCase().trim()]
+      `INSERT INTO users (username, password_hash, full_name, email, enrollment_code, program_track, role)
+       VALUES ($1, $2, $3, $4, $5, $6, 'student') RETURNING id, username, full_name, email, role`,
+      [username.trim(), hash, fullName.trim(), email.trim(), enrollmentCode.toUpperCase().trim(), codePathway]
     );
     const user = result.rows[0];
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
@@ -968,12 +970,13 @@ app.get('/api/admin/enrollment-codes', adminRequired, async (_req, res) => {
 });
 
 app.post('/api/admin/enrollment-codes', adminRequired, async (req, res) => {
-  const { code, label } = req.body;
+  const { code, label, pathway } = req.body;
   if (!code) return res.status(400).json({ error: 'Code required' });
+  const cleanPathway = (typeof pathway === 'string' && pathway.trim()) ? pathway.trim() : null;
   try {
     const result = await pool.query(
-      `INSERT INTO enrollment_codes (code, label) VALUES ($1, $2) RETURNING *`,
-      [code.toUpperCase().trim(), label || '']
+      `INSERT INTO enrollment_codes (code, label, pathway) VALUES ($1, $2, $3) RETURNING *`,
+      [code.toUpperCase().trim(), label || '', cleanPathway]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -984,7 +987,7 @@ app.post('/api/admin/enrollment-codes', adminRequired, async (req, res) => {
 
 app.patch('/api/admin/enrollment-codes/:code', adminRequired, async (req, res) => {
   const oldCode = req.params.code;
-  const { code: newCode, label, is_active } = req.body || {};
+  const { code: newCode, label, is_active, pathway } = req.body || {};
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -993,13 +996,17 @@ app.patch('/api/admin/enrollment-codes/:code', adminRequired, async (req, res) =
     const nextCode = (typeof newCode === 'string' && newCode.trim()) ? newCode.toUpperCase().trim() : oldCode;
     const nextLabel = (typeof label === 'string') ? label : cur.rows[0].label;
     const nextActive = (typeof is_active === 'boolean') ? is_active : cur.rows[0].is_active;
+    // Pathway is nullable. Sending '' or null clears it. Undefined keeps existing value.
+    let nextPathway = cur.rows[0].pathway;
+    if (pathway === null || pathway === '') nextPathway = null;
+    else if (typeof pathway === 'string' && pathway.trim()) nextPathway = pathway.trim();
     if (nextCode !== oldCode) {
       const dupe = await client.query('SELECT 1 FROM enrollment_codes WHERE code = $1', [nextCode]);
       if (dupe.rowCount > 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Code already exists' }); }
-      await client.query('UPDATE enrollment_codes SET code = $1, label = $2, is_active = $3 WHERE code = $4', [nextCode, nextLabel, nextActive, oldCode]);
+      await client.query('UPDATE enrollment_codes SET code = $1, label = $2, is_active = $3, pathway = $4 WHERE code = $5', [nextCode, nextLabel, nextActive, nextPathway, oldCode]);
       await client.query('UPDATE users SET enrollment_code = $1 WHERE enrollment_code = $2', [nextCode, oldCode]);
     } else {
-      await client.query('UPDATE enrollment_codes SET label = $1, is_active = $2 WHERE code = $3', [nextLabel, nextActive, oldCode]);
+      await client.query('UPDATE enrollment_codes SET label = $1, is_active = $2, pathway = $3 WHERE code = $4', [nextLabel, nextActive, nextPathway, oldCode]);
     }
     await client.query('COMMIT');
     const updated = await pool.query('SELECT * FROM enrollment_codes WHERE code = $1', [nextCode]);

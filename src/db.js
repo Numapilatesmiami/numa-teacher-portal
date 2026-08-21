@@ -463,6 +463,10 @@ export async function initDatabase() {
       ALTER TABLE signed_documents ADD COLUMN IF NOT EXISTS signature_image_bytes BYTEA;
       CREATE INDEX IF NOT EXISTS idx_signed_documents_user ON signed_documents(user_id);
       CREATE INDEX IF NOT EXISTS idx_signed_documents_document ON signed_documents(document_id);
+
+      -- Each enrollment code carries the pathway it grants (mat, reformer, both, or custom slug).
+      -- Nullable so legacy codes keep working; UI treats NULL as "admin will assign later".
+      ALTER TABLE enrollment_codes ADD COLUMN IF NOT EXISTS pathway TEXT;
     `);
 
     // Seed the enrollment agreement as a required document.
