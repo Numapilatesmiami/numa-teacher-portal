@@ -538,6 +538,9 @@ function renderSidebar() {
 function getModuleStatus(moduleId) {
   const user = APP.currentUser;
   if (!user) return 'locked';
+  // Preview-as-student: admins should walk through the entire course without
+  // needing to pass each quiz. Show every module as in-progress.
+  if (APP.previewAsStudent) return 'in-progress';
   if (moduleId === 1) {
     // Module 1 always unlocked
     if (user.quizScores && user.quizScores[1] >= 80) return 'completed';
