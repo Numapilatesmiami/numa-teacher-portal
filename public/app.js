@@ -569,6 +569,8 @@ function getOverallProgress() {
 function allModulesPassed() {
   const user = APP.currentUser;
   if (!user || !user.quizScores) return false;
+  // Preview mode: pretend everything is passed so the admin can see the exam.
+  if (APP.previewAsStudent) return true;
   return COURSE_MODULES.every(mod => user.quizScores[mod.id] >= 80);
 }
 
@@ -1811,7 +1813,7 @@ function renderScenariosPage() {
   user.scenarioSubmissions = user.scenarioSubmissions || [];
   
   // Check if all module quizzes passed (at least through Module 6)
-  const prereqMet = user.quizScores && user.quizScores[6] >= 80;
+  const prereqMet = (user.quizScores && user.quizScores[6] >= 80) || APP.previewAsStudent;
   
   if (!prereqMet) {
     return '<div class="exam-header fade-in"><h1>Scenario Assessments</h1><div class="locked-overlay" style="padding:20px;"><i class="fa-solid fa-lock"></i><h3>Complete Modules 1-6 First</h3><p>You must pass the first 6 module quizzes before accessing scenario assessments.</p></div></div>';
