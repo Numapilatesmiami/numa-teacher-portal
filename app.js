@@ -27,6 +27,17 @@ async function apiCall(path, options = {}) {
   // API_BASE is intentionally an empty string when the frontend and backend
   // are served from the same origin (Railway). Only bail if it's null/undefined.
   if (API_BASE === null || API_BASE === undefined) return null;
+
+  // ----- Preview-as-student read-only guard -----
+  // When an admin is previewing the student experience, we allow reads (GET)
+  // but block any state-changing calls so we don't accidentally write section
+  // progress, quiz scores, or messages onto the admin's own user record.
+  const method = (options.method || 'GET').toUpperCase();
+  if (APP.previewAsStudent && method !== 'GET') {
+    console.info('[preview-as-student] blocked', method, path);
+    return { ok: true, _previewBlocked: true };
+  }
+
   try {
     const token = getAuthToken();
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -171,12 +182,65 @@ function render() {
   const app = document.getElementById('app');
   if (APP.currentView === 'login') {
     app.innerHTML = renderLogin();
+  } else if (APP.currentUser?.isAdmin && APP.previewAsStudent) {
+    // Admin is previewing the course as a student would see it.
+    app.innerHTML = renderPreviewBanner() + renderAppShell();
   } else if (APP.currentUser?.isAdmin) {
     app.innerHTML = renderAdminShell();
   } else {
     app.innerHTML = renderAppShell();
   }
 }
+
+// ----- Admin "Preview as Student" mode -----
+// Renders a persistent banner at the top of the page so it's obvious we're
+// not looking at a real student session, plus an easy exit button.
+function renderPreviewBanner() {
+  return `
+  <div id="preview-banner" style="position:sticky;top:0;z-index:9999;background:#3b2f24;color:#fff;padding:9px 18px;display:flex;align-items:center;gap:14px;font-size:13.5px;box-shadow:0 2px 8px rgba(0,0,0,.15);">
+    <i class="fa-solid fa-eye" style="color:#e6d9bf;"></i>
+    <div style="flex:1;min-width:0;">
+      <strong>Preview mode</strong> — you're viewing the course as a student. Progress, quiz scores, and messages are <strong>not</strong> saved.
+    </div>
+    <button onclick="exitStudentPreview()" style="background:#A38D78;color:#fff;border:0;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+      <i class="fa-solid fa-arrow-left"></i> Exit Preview
+    </button>
+  </div>`;
+}
+
+function enterStudentPreview() {
+  APP.previewAsStudent = true;
+  // Wipe any cached student pathway so the admin sees ALL courses, not the
+  // last student's filtered subset.
+  try { _studentPathwayCache = null; } catch (e) {}
+  // The student pages read fields like sectionProgress and quizScores directly
+  // off APP.currentUser. Admin accounts don't have those — backfill so nothing
+  // crashes while previewing. These are session-only; nothing is persisted
+  // because apiCall() blocks all non-GET requests in preview mode.
+  const u = APP.currentUser || {};
+  u.moduleProgress   = u.moduleProgress   || {};
+  u.sectionProgress  = u.sectionProgress  || {};
+  u.quizScores       = u.quizScores       || {};
+  u.hourLogs         = u.hourLogs         || { observation: [], teaching: [], personal: [] };
+  u.scenarioSubmissions = u.scenarioSubmissions || [];
+  u.activity         = u.activity         || [];
+  u.fullName         = u.fullName         || u.full_name || 'Preview (Admin)';
+  APP.currentUser = u;
+  // Land the admin on the student dashboard just like a real student login would.
+  APP.currentView = 'dashboard';
+  APP.viewParams = {};
+  render();
+}
+window.enterStudentPreview = enterStudentPreview;
+
+function exitStudentPreview() {
+  APP.previewAsStudent = false;
+  try { _studentPathwayCache = null; } catch (e) {}
+  APP.currentView = 'admin';
+  APP.viewParams = {};
+  render();
+}
+window.exitStudentPreview = exitStudentPreview;
 
 // ===== LOGIN / REGISTER =====
 function renderLogin() {
@@ -1296,6 +1360,11 @@ function renderAdminContent() {
   </div>
 
   <div class="admin-overview-grid">
+    <div class="admin-overview-card" onclick="enterStudentPreview()" style="background:linear-gradient(135deg,#fff8ec 0%,#faefd8 100%);border:1px solid #e6d9bf;">
+      <div class="admin-overview-icon" style="color:#A38D78;"><i class="fa-solid fa-eye"></i></div>
+      <h3>Preview as Student</h3>
+      <p>See every course exactly as a student would</p>
+    </div>
     <div class="admin-overview-card" onclick="navigate('admin',{view:'modules'})">
       <div class="admin-overview-icon"><i class="fa-solid fa-book-open"></i></div>
       <h3>Course Content</h3>
