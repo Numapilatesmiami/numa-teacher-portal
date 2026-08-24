@@ -467,6 +467,11 @@ export async function initDatabase() {
       -- Each enrollment code carries the pathway it grants (mat, reformer, both, or custom slug).
       -- Nullable so legacy codes keep working; UI treats NULL as "admin will assign later".
       ALTER TABLE enrollment_codes ADD COLUMN IF NOT EXISTS pathway TEXT;
+
+      -- Archive + read tracking for the staff inbox
+      ALTER TABLE student_questions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+      ALTER TABLE student_questions ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+      CREATE INDEX IF NOT EXISTS idx_student_questions_archived ON student_questions(archived_at);
     `);
 
     // Seed the enrollment agreement as a required document.

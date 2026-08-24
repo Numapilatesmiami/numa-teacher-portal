@@ -3455,6 +3455,16 @@ function _ensureInboxStyles() {
   .inbox-status-open{background:#e3f2fd;color:#1565c0;}
   .inbox-status-answered{background:#e8f5e9;color:#2e7d32;}
   .inbox-status-closed{background:#f5efe4;color:#6a5d4d;}
+  .inbox-status-unread{background:#c62828;color:#fff;}
+  .inbox-status-needsreply{background:#fff3e0;color:#a1591b;}
+  .inbox-status-archived{background:#eeeae0;color:#6a5d4d;}
+  .inbox-row.archived{opacity:.6;}
+  .inbox-row.archived .inbox-from,.inbox-row.archived .inbox-subject{font-weight:500;color:#8a7a6a;}
+  .inbox-row-actions{display:flex;gap:6px;align-items:center;}
+  .inbox-icon-btn{background:transparent;border:1px solid transparent;color:#8a7a6a;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;transition:background .12s,color .12s,border-color .12s;}
+  .inbox-icon-btn:hover{background:#f5efe4;color:#3b2f24;border-color:#e6d9bf;}
+  .inbox-row.unread .inbox-dot{background:#c62828;}
+  .inbox-row.needsreply .inbox-dot{background:#e6a24b;}
   .inbox-reply-count{font-size:12px;color:#8a7a6a;display:inline-flex;align-items:center;gap:3px;}
   .inbox-time{font-size:12px;color:#8a7a6a;white-space:nowrap;}
 
@@ -3574,26 +3584,57 @@ async function loadStudentQuestions() {
   renderInboxList();
 }
 
+// Compute a UI state for a question row from the staff/admin perspective.
+// Returns { key, label } where key drives the pill class and row class.
+//
+//   unread     — staff has never opened this thread (read_at IS NULL)
+//   needsreply — read, but last message is from the student (status still 'open')
+//   answered   — staff has replied and thread is settled ('answered')
+//   closed     — explicitly closed by staff
+//   archived   — archived_at IS NOT NULL (takes precedence)
+function _inboxStaffState(q) {
+  if (q.archived_at) return { key: 'archived', label: 'Archived' };
+  if (!q.read_at)    return { key: 'unread',   label: 'New' };
+  if (q.status === 'closed')   return { key: 'closed',   label: 'Closed' };
+  if (q.status === 'answered') return { key: 'answered', label: 'Answered' };
+  return { key: 'needsreply', label: 'Needs Reply' };
+}
+
 function renderInboxList() {
   const target = document.getElementById('my-questions');
   if (!target) return;
   const isAdmin = window.NUMA_INBOX.isAdmin;
   const filter = window.NUMA_INBOX.filter || 'all';
   let list = window.NUMA_INBOX.list || [];
-  if (filter !== 'all') list = list.filter(q => q.status === filter);
+
+  // Filtering:
+  //  — Admin: filter buckets are the computed UI state (unread/needsreply/answered/closed/archived).
+  //    'all' means the default "Inbox" view: everything the server returned (already excludes archived).
+  //  — Student: filter still maps directly to the raw status column (open/answered/closed).
+  if (isAdmin) {
+    if (filter !== 'all' && filter !== 'archived') {
+      list = list.filter(q => _inboxStaffState(q).key === filter);
+    }
+  } else if (filter !== 'all') {
+    list = list.filter(q => q.status === filter);
+  }
+
   if (!list.length) {
-    target.innerHTML = `<div class="inbox-empty"><i class="fa-regular fa-envelope-open"></i>${isAdmin ? 'No messages in this view.' : 'No messages yet. Click <strong>Compose</strong> to send your first question.'}</div>`;
+    const emptyMsg = isAdmin
+      ? (filter === 'archived' ? 'No archived threads.' : 'Inbox is clear.')
+      : 'No messages yet. Click <strong>Compose</strong> to send your first question.';
+    target.innerHTML = `<div class="inbox-empty"><i class="fa-regular fa-envelope-open"></i>${emptyMsg}</div>`;
     return;
   }
-  // Newest first (server already sorts; this is a defensive re-sort)
+
+  // Newest first
   const sorted = [...list].sort((a, b) => {
     const at = new Date(a.last_activity_at || a.updated_at || a.created_at).getTime();
     const bt = new Date(b.last_activity_at || b.updated_at || b.created_at).getTime();
     return bt - at;
   });
+
   target.innerHTML = sorted.map(q => {
-    const statusKey = q.status === 'answered' ? 'answered' : (q.status === 'closed' ? 'closed' : 'open');
-    const statusLabel = statusKey === 'answered' ? 'Answered' : (statusKey === 'closed' ? 'Closed' : 'Open');
     const subject = q.subject && q.subject.trim() ? q.subject : '(No subject)';
     const preview = (q.body || '').replace(/\s+/g, ' ').slice(0, 100);
     const from = isAdmin
@@ -3601,13 +3642,35 @@ function renderInboxList() {
       : 'You → NUMA Staff';
     const time = _inboxRelTime(q.last_activity_at || q.updated_at || q.created_at);
     const replies = q.reply_count || 0;
-    // Treat "open" with no replies as unread for the student view (so it stands out)
-    const isUnread = isAdmin ? (statusKey === 'open') : false;
     const navTo = isAdmin
       ? `navigate('admin',{view:'question-detail',id:${q.id}})`
       : `navigate('question-detail',{id:${q.id}})`;
+
+    let rowClass = '';
+    let pillKey = '';
+    let pillLabel = '';
+    let actionBtn = '';
+    if (isAdmin) {
+      const st = _inboxStaffState(q);
+      pillKey = st.key;
+      pillLabel = st.label;
+      if (st.key === 'unread') rowClass = 'unread';
+      else if (st.key === 'needsreply') rowClass = 'needsreply';
+      else if (st.key === 'archived') rowClass = 'archived';
+      // Archive / Unarchive button per row
+      if (st.key === 'archived') {
+        actionBtn = `<button class="inbox-icon-btn" title="Restore from archive" onclick="event.stopPropagation(); archiveQuestion(${q.id}, false)"><i class="fa-solid fa-inbox"></i></button>`;
+      } else {
+        actionBtn = `<button class="inbox-icon-btn" title="Archive thread" onclick="event.stopPropagation(); archiveQuestion(${q.id}, true)"><i class="fa-solid fa-box-archive"></i></button>`;
+      }
+    } else {
+      // Student view: keep existing simple mapping
+      pillKey = q.status === 'answered' ? 'answered' : (q.status === 'closed' ? 'closed' : 'open');
+      pillLabel = pillKey === 'answered' ? 'Answered' : (pillKey === 'closed' ? 'Closed' : 'Open');
+    }
+
     return `
-      <div class="inbox-row ${isUnread ? 'unread' : ''}" onclick="${navTo}">
+      <div class="inbox-row ${rowClass}" onclick="${navTo}">
         <span class="inbox-dot"></span>
         <div class="inbox-from">${escapeHtml(from)}</div>
         <div class="inbox-snippet">
@@ -3616,7 +3679,8 @@ function renderInboxList() {
         </div>
         <div class="inbox-meta">
           ${replies > 0 ? `<span class="inbox-reply-count"><i class="fa-regular fa-comment"></i> ${replies}</span>` : ''}
-          <span class="inbox-status-pill inbox-status-${statusKey}">${statusLabel}</span>
+          <span class="inbox-status-pill inbox-status-${pillKey}">${pillLabel}</span>
+          ${actionBtn ? `<div class="inbox-row-actions">${actionBtn}</div>` : ''}
         </div>
         <div class="inbox-time">${time}</div>
       </div>`;
@@ -3746,7 +3810,8 @@ async function loadQuestionThread(id, isAdmin) {
           <button class="btn-send" onclick="submitQuestionReply(${id}, ${isAdmin})"><i class="fa-solid fa-paper-plane"></i> Send Reply</button>
           ${isAdmin ? `
             <button class="btn-ghost-admin" onclick="updateQuestionStatus(${id},'answered')"><i class="fa-solid fa-check"></i> Mark Answered</button>
-            <button class="btn-ghost-admin" onclick="updateQuestionStatus(${id},'closed')"><i class="fa-solid fa-lock"></i> Close Thread</button>` : ''}
+            <button class="btn-ghost-admin" onclick="updateQuestionStatus(${id},'closed')"><i class="fa-solid fa-lock"></i> Close Thread</button>
+            <button class="btn-ghost-admin" onclick="archiveQuestion(${id}, ${!q.archived_at})" title="${q.archived_at ? 'Restore this thread to the active inbox' : 'Move this thread out of the active inbox'}"><i class="fa-solid fa-${q.archived_at ? 'inbox' : 'box-archive'}"></i> ${q.archived_at ? 'Unarchive' : 'Archive'}</button>` : ''}
         </div>
       </div>`;
   }
@@ -3773,6 +3838,36 @@ async function updateQuestionStatus(id, status) {
   loadQuestionThread(id, true);
 }
 
+// Archive or restore a thread (staff only). If we're on the inbox list, refresh it.
+// If we're inside a thread view, navigate back to the inbox afterwards.
+async function archiveQuestion(id, archived) {
+  const out = await apiCall(`/api/admin/questions/${id}/archive`, {
+    method: 'PUT',
+    body: JSON.stringify({ archived: !!archived })
+  });
+  if (!out) { alert('Could not update archive state.'); return; }
+  // If the inbox list is on-screen, re-fetch it so the row moves buckets.
+  if (document.getElementById('my-questions')) {
+    loadAdminQuestions();
+  } else {
+    // In thread view — go back to inbox after archiving/unarchiving.
+    navigate('admin', { view: 'questions' });
+  }
+}
+window.archiveQuestion = archiveQuestion;
+
+// Toggle read/unread for a thread (staff only).
+async function toggleQuestionRead(id, read) {
+  const out = await apiCall(`/api/admin/questions/${id}/read`, {
+    method: 'PUT',
+    body: JSON.stringify({ read: !!read })
+  });
+  if (!out) { alert('Could not update read state.'); return; }
+  if (document.getElementById('my-questions')) loadAdminQuestions();
+  else loadQuestionThread(id, true);
+}
+window.toggleQuestionRead = toggleQuestionRead;
+
 // =============================================================================
 // ===== ADMIN: STUDENT QUESTIONS INBOX =======================================
 // =============================================================================
@@ -3791,10 +3886,12 @@ function renderAdminQuestions() {
         </div>
       </div>
       <div class="inbox-filters">
-        <button class="inbox-filter ${f==='all'?'active':''}" onclick="setAdminInboxFilter('all')">All</button>
-        <button class="inbox-filter ${f==='open'?'active':''}" onclick="setAdminInboxFilter('open')">Open</button>
+        <button class="inbox-filter ${f==='all'?'active':''}" onclick="setAdminInboxFilter('all')">Inbox</button>
+        <button class="inbox-filter ${f==='unread'?'active':''}" onclick="setAdminInboxFilter('unread')">Unread</button>
+        <button class="inbox-filter ${f==='needsreply'?'active':''}" onclick="setAdminInboxFilter('needsreply')">Needs Reply</button>
         <button class="inbox-filter ${f==='answered'?'active':''}" onclick="setAdminInboxFilter('answered')">Answered</button>
         <button class="inbox-filter ${f==='closed'?'active':''}" onclick="setAdminInboxFilter('closed')">Closed</button>
+        <button class="inbox-filter ${f==='archived'?'active':''}" onclick="setAdminInboxFilter('archived')" style="margin-left:auto;"><i class="fa-solid fa-box-archive" style="margin-right:4px;"></i>Archived</button>
       </div>
       <div class="inbox-list" id="my-questions"><div class="inbox-empty">Loading…</div></div>
     </div>`;
@@ -3802,25 +3899,18 @@ function renderAdminQuestions() {
 
 function setAdminInboxFilter(f) {
   window.NUMA_INBOX.filter = f;
-  loadAdminQuestions(f === 'all' ? undefined : f);
-  // Update active state visually
-  document.querySelectorAll('.inbox-filter').forEach(b => b.classList.remove('active'));
-  const labelMap = { all: 'all', open: 'open', answered: 'answered', closed: 'closed' };
-  const target = [...document.querySelectorAll('.inbox-filter')].find(b => b.textContent.trim().toLowerCase() === labelMap[f]);
-  if (target) target.classList.add('active');
+  loadAdminQuestions(f);
 }
 window.setAdminInboxFilter = setAdminInboxFilter;
 
-async function loadAdminQuestions(status) {
-  const path = '/api/admin/questions' + (status ? '?status=' + status : '');
-  const list = await apiCall(path) || [];
+async function loadAdminQuestions(filter) {
+  filter = filter || window.NUMA_INBOX.filter || 'all';
+  // Server-side: only 'archived' pulls the archived set; all other filters exclude archived.
+  const qs = filter === 'archived' ? '?archived=true' : '';
+  const list = await apiCall('/api/admin/questions' + qs) || [];
   window.NUMA_INBOX.list = list;
-  // For admin view, the server-side filter already applied; render without re-filtering.
-  // Temporarily clear filter so renderInboxList shows whatever the server returned.
-  const prevFilter = window.NUMA_INBOX.filter;
-  window.NUMA_INBOX.filter = 'all';
+  // Client-side sub-filter for state buckets
   renderInboxList();
-  window.NUMA_INBOX.filter = prevFilter;
 }
 
 function renderAdminQuestionDetail() {

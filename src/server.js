@@ -2032,8 +2032,14 @@ app.get('/api/questions/:id', authRequired, async (req, res) => {
     );
     if (qRes.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const q = qRes.rows[0];
-    if (req.user.role !== 'admin' && q.user_id !== req.user.id) {
+    const isStaff = req.user.role === 'admin' || req.user.role === 'teacher';
+    if (!isStaff && q.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
+    }
+    // Auto-mark as read the first time any staff member opens the thread.
+    if (isStaff && !q.read_at) {
+      await pool.query('UPDATE student_questions SET read_at = NOW() WHERE id = $1', [req.params.id]);
+      q.read_at = new Date().toISOString();
     }
     const rRes = await pool.query(
       `SELECT r.*, u.full_name AS author_name
@@ -2083,16 +2089,27 @@ app.post('/api/questions/:id/replies', authRequired, async (req, res) => {
   }
 });
 
-// Admin: list ALL student questions
+// Admin: list ALL student questions.
+// By default, archived threads are HIDDEN. Pass ?archived=true to see only archived,
+// or ?archived=all to see everything regardless of archive state.
 app.get('/api/admin/questions', staffRequired, async (req, res) => {
   try {
-    const status = req.query.status; // optional filter
+    const status = req.query.status;      // 'open' | 'answered' | 'closed' | undefined
+    const archived = req.query.archived;  // 'true' | 'all' | undefined (default: hide archived)
     const params = [];
-    let where = '';
-    if (status) { params.push(status); where = `WHERE q.status = $${params.length}`; }
+    const conds = [];
+    if (status) { params.push(status); conds.push(`q.status = $${params.length}`); }
+    if (archived === 'true') {
+      conds.push('q.archived_at IS NOT NULL');
+    } else if (archived !== 'all') {
+      conds.push('q.archived_at IS NULL');
+    }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     const result = await pool.query(
       `SELECT q.*, u.full_name AS student_name, u.username AS student_username,
-        (SELECT COUNT(*) FROM question_replies r WHERE r.question_id = q.id)::int AS reply_count
+        (SELECT COUNT(*) FROM question_replies r WHERE r.question_id = q.id)::int AS reply_count,
+        (SELECT MAX(r.created_at) FROM question_replies r WHERE r.question_id = q.id) AS last_reply_at,
+        (SELECT r.author_role FROM question_replies r WHERE r.question_id = q.id ORDER BY r.created_at DESC LIMIT 1) AS last_reply_role
        FROM student_questions q
        JOIN users u ON u.id = q.user_id
        ${where}
@@ -2116,6 +2133,44 @@ app.put('/api/admin/questions/:id/status', staffRequired, async (req, res) => {
     [status, req.params.id]
   );
   res.json(result.rows[0]);
+});
+
+// Admin/Teacher: archive or unarchive a thread.
+// Body: { archived: true } archives, { archived: false } restores.
+app.put('/api/admin/questions/:id/archive', staffRequired, async (req, res) => {
+  try {
+    const archived = !!(req.body && req.body.archived);
+    const result = await pool.query(
+      `UPDATE student_questions
+         SET archived_at = ${archived ? 'NOW()' : 'NULL'},
+             updated_at = updated_at
+       WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update archive state' });
+  }
+});
+
+// Admin/Teacher: explicitly mark a thread as read or unread.
+app.put('/api/admin/questions/:id/read', staffRequired, async (req, res) => {
+  try {
+    const read = !!(req.body && req.body.read);
+    const result = await pool.query(
+      `UPDATE student_questions
+         SET read_at = ${read ? 'NOW()' : 'NULL'}
+       WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update read state' });
+  }
 });
 
 // Admin: delete a question
