@@ -1502,7 +1502,17 @@ function getQuizTimeLimit(moduleId) {
 }
 
 // ----- Grading System -----
-function getLetterGrade(pct) {
+// A brand-new student who has not yet taken a single quiz, exam, or scenario
+// should NOT be shown as an "F" — they're at 0% because they haven't started,
+// not because they failed. getLetterGrade() only assigns a letter when there
+// is real work to grade; otherwise it returns '—' (in progress).
+function getLetterGrade(pct, opts) {
+  // opts.hasWork = true when at least one assessment has been completed.
+  // Back-compat: if opts is omitted, treat any pct > 0 as "has work".
+  const hasWork = opts && Object.prototype.hasOwnProperty.call(opts, 'hasWork')
+    ? !!opts.hasWork
+    : pct > 0;
+  if (!hasWork) return '—';
   if (pct >= 93) return 'A';
   if (pct >= 90) return 'A-';
   if (pct >= 87) return 'B+';
@@ -1515,6 +1525,7 @@ function getLetterGrade(pct) {
 }
 
 function getGradeColor(grade) {
+  if (!grade || grade === '—' || grade === 'N/A') return 'var(--charcoal-muted)';
   if (grade.startsWith('A')) return 'var(--success)';
   if (grade.startsWith('B')) return '#2E86AB';
   if (grade.startsWith('C')) return 'var(--warning)';
@@ -1522,7 +1533,7 @@ function getGradeColor(grade) {
 }
 
 function calculateOverallGrade(user) {
-  if (!user || !user.quizScores) return { pct: 0, letter: 'N/A' };
+  if (!user || !user.quizScores) return { pct: 0, letter: '—', hasWork: false };
   const quizScores = [];
   COURSE_MODULES.forEach(m => {
     if (user.quizScores[m.id] !== undefined && user.quizScores[m.id] !== null) {
@@ -1537,7 +1548,9 @@ function calculateOverallGrade(user) {
     if (s.grade !== undefined && s.grade !== null) scenarioScores.push(s.grade);
   });
   const scenarioAvg = scenarioScores.length > 0 ? scenarioScores.reduce((a,b) => a+b, 0) / scenarioScores.length : 0;
-  
+
+  const hasWork = quizScores.length > 0 || !!user.examPassed || scenarioScores.length > 0;
+
   // Weighted: Quizzes 40%, Final Exam 35%, Scenarios 25%
   let overall;
   if (user.examPassed && scenarioScores.length > 0) {
@@ -1547,7 +1560,8 @@ function calculateOverallGrade(user) {
   } else {
     overall = quizAvg;
   }
-  return { pct: Math.round(overall), letter: getLetterGrade(Math.round(overall)) };
+  const pct = Math.round(overall);
+  return { pct, letter: getLetterGrade(pct, { hasWork }), hasWork };
 }
 
 // ----- Quiz History Tracking -----
@@ -2116,7 +2130,7 @@ function renderAdminGradebook() {
     html += '<td style="text-align:center;">' + (quizScores.length > 0 ? quizAvg + '%' : '—') + '</td>';
     html += '<td style="text-align:center;">' + (u.examPassed ? u.examScore + '%' : '—') + '</td>';
     html += '<td style="text-align:center;">' + (scenarioAvg !== null ? scenarioAvg + '%' : '—') + '</td>';
-    html += '<td style="text-align:center;font-weight:700;">' + (grade.pct > 0 ? grade.pct + '%' : '—') + '</td>';
+    html += '<td style="text-align:center;font-weight:700;">' + (grade.hasWork ? grade.pct + '%' : '—') + '</td>';
     html += '<td style="text-align:center;font-weight:700;font-size:1.1rem;color:' + getGradeColor(grade.letter) + '">' + grade.letter + '</td>';
     html += '</tr>';
   });
