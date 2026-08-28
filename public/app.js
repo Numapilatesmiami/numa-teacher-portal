@@ -5443,39 +5443,51 @@ async function applyModuleContentOverrides() {
       const dbSectionsById = {};
       detail.sections.forEach(s => { dbSectionsById[String(s.id)] = s; });
 
-      // 1) Update existing hardcoded sections that match DB rows
-      courseMod.sections = (courseMod.sections || []).map(cs => {
-        const dbS = dbSectionsById[String(cs.id)];
-        if (!dbS) return cs;            // not in DB; keep as-is (e.g. quizzes)
-        // Merge: keep cs's special flags (isQuiz, etc.), override title + content
-        return {
-          ...cs,
-          title: dbS.title || cs.title,
-          content: dbS.content != null ? dbS.content : cs.content
-        };
-      });
+      // 1) Update existing hardcoded sections that match DB rows.
+      //    IMPORTANT: hardcoded content-sections that are NOT in the DB have
+      //    been deleted by admin and must be dropped. Quiz sections (isQuiz)
+      //    and any section explicitly flagged `keepBundled: true` are
+      //    preserved even without a DB row.
+      courseMod.sections = (courseMod.sections || [])
+        .map(cs => {
+          const dbS = dbSectionsById[String(cs.id)];
+          if (!dbS) return cs; // handled by the filter below
+          // Merge: keep cs's special flags (isQuiz, etc.), override title + content
+          return {
+            ...cs,
+            title: dbS.title || cs.title,
+            content: dbS.content != null ? dbS.content : cs.content
+          };
+        })
+        .filter(cs => {
+          if (dbSectionsById[String(cs.id)]) return true;   // matched in DB
+          if (cs.isQuiz) return true;                        // module-end quiz
+          if (cs.keepBundled) return true;                   // explicit opt-out
+          // Otherwise the admin deleted it — drop it from the student view.
+          return false;
+        });
 
-      // 2) Add brand-new sections (in DB but not in the hardcoded array).
-      //    Insert them in DB sort order, before any quiz section if present.
-      const existingIds = new Set(courseMod.sections.map(s => String(s.id)));
-      const newOnes = detail.sections
-        .filter(s => !existingIds.has(String(s.id)))
+      // 2) Reorder so that the section list reflects the DB's sort order
+      //    (that's what admin sees when editing). Preserved non-DB sections
+      //    like quizzes and `keepBundled` items are kept at the end.
+      const dbOrder = [...detail.sections]
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-        .map(s => ({ id: s.id, title: s.title, content: s.content || '' }));
+        .map(s => String(s.id));
+      const bySectionId = {};
+      courseMod.sections.forEach(s => { bySectionId[String(s.id)] = s; });
 
-      if (newOnes.length) {
-        // Insert before the first quiz section (so the quiz stays last)
-        const quizIdx = courseMod.sections.findIndex(s => s.isQuiz);
-        if (quizIdx === -1) {
-          courseMod.sections = [...courseMod.sections, ...newOnes];
-        } else {
-          courseMod.sections = [
-            ...courseMod.sections.slice(0, quizIdx),
-            ...newOnes,
-            ...courseMod.sections.slice(quizIdx)
-          ];
-        }
-      }
+      const orderedFromDb = dbOrder
+        .map(id => bySectionId[id] || {
+          id,
+          title: dbSectionsById[id].title,
+          content: dbSectionsById[id].content || ''
+        });
+      const preserved = courseMod.sections.filter(s => !dbSectionsById[String(s.id)]);
+
+      // Quizzes always sit at the very end; other preserved items just after DB.
+      const quizzes = preserved.filter(s => s.isQuiz);
+      const otherPreserved = preserved.filter(s => !s.isQuiz);
+      courseMod.sections = [...orderedFromDb, ...otherPreserved, ...quizzes];
     }
 
     _moduleContentLoaded = true;
