@@ -6625,88 +6625,9 @@ function renderStudentHomeworkCard(moduleId, data) {
     </div>`;
 }
 
-async function studentUploadHomework(moduleId) {
-  const fileInput = document.getElementById('hw-file-' + moduleId);
-  const notesEl = document.getElementById('hw-notes-' + moduleId);
-  const status = document.getElementById('hw-progress-' + moduleId);
-  if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-    if (status) status.innerHTML = '<span style="color:#c62828;">Please choose a video file first.</span>';
-    return;
-  }
-  const file = fileInput.files[0];
-  const fd = new FormData();
-  fd.append('video', file);
-  if (notesEl && notesEl.value) fd.append('student_notes', notesEl.value);
-  if (status) status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading ' + _hwFmtBytes(file.size) + '...';
-  try {
-    const url = (API_BASE || '') + '/api/modules/' + encodeURIComponent(moduleId) + '/homework/submissions';
-    const token = localStorage.getItem('numa_token');
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
-      body: fd
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      if (status) status.innerHTML = '<span style="color:#c62828;">' + escapeHtml(j.error || ('Upload failed (' + res.status + ')')) + '</span>';
-      return;
-    }
-    if (status) status.innerHTML = '<span style="color:#2e7d32;">Uploaded.</span>';
-    NUMA_HW.perModule[moduleId] = null;
-    // Re-render the module page
-    if (typeof navigate === 'function' && APP.viewParams) {
-      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
-    }
-  } catch (e) {
-    if (status) status.innerHTML = '<span style="color:#c62828;">' + escapeHtml(e.message) + '</span>';
-  }
-}
-window.studentUploadHomework = studentUploadHomework;
-
-async function studentChangeHomework(moduleId) {
-  // Replace flow: show the upload UI again
-  const card = document.getElementById('hw-comments-' + (NUMA_HW.perModule[moduleId]?.submission?.id || ''))?.closest('.card-body');
-  if (!card) return;
-  // Simpler: prompt for a file via a hidden input
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.wmv,.flv,.3gp,.mpeg,.mpg';
-  input.onchange = async () => {
-    if (!input.files || !input.files[0]) return;
-    const notes = prompt('Optional notes for your instructor (leave blank to skip):', '');
-    const fd = new FormData();
-    fd.append('video', input.files[0]);
-    if (notes) fd.append('student_notes', notes);
-    const token = localStorage.getItem('numa_token');
-    const res = await fetch((API_BASE || '') + '/api/modules/' + encodeURIComponent(moduleId) + '/homework/submissions', {
-      method: 'POST',
-      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
-      body: fd
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) { alert(j.error || 'Upload failed.'); return; }
-    NUMA_HW.perModule[moduleId] = null;
-    if (typeof navigate === 'function' && APP.viewParams) {
-      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
-    }
-  };
-  input.click();
-}
-window.studentChangeHomework = studentChangeHomework;
-
-async function studentDeleteHomework(moduleId) {
-  if (!confirm('Delete your homework submission? You can re-upload anytime before it is graded.')) return;
-  const r = await apiCall('/api/modules/' + encodeURIComponent(moduleId) + '/homework/submission', { method: 'DELETE' });
-  if (r && !r.error) {
-    NUMA_HW.perModule[moduleId] = null;
-    if (typeof navigate === 'function' && APP.viewParams) {
-      navigate('module', { id: parseInt(moduleId, 10) || moduleId, section: APP.viewParams.section });
-    }
-  } else {
-    alert((r && r.error) || 'Could not delete submission.');
-  }
-}
-window.studentDeleteHomework = studentDeleteHomework;
+// Homework is now submitted by email to education@numapilatesmiami.com.
+// The old in-portal upload/replace/delete flows have been removed.
+// See renderStudentHomeworkCard for the email panel shown to students.
 
 // Render comments thread under a student's submission (or admin's submission view)
 async function renderHomeworkCommentsThread(submissionId, mountId) {

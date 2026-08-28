@@ -1446,82 +1446,14 @@ app.get('/api/modules/:moduleId/homework', authRequired, async (req, res) => {
 
 // Student: submit OR replace a homework video for a module.
 // Replacement is only allowed while status is still 'submitted' (not graded).
+// Homework uploads are DISABLED — students email assignments to
+// education@numapilatesmiami.com. This endpoint returns 410 Gone with
+// clear instructions in case any stale client tries the old flow.
 app.post('/api/modules/:moduleId/homework/submissions', authRequired, (req, res) => {
-  videoUpload.single('video')(req, res, async (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: `Video is too large. Max size is ${Math.round(HOMEWORK_MAX_BYTES / 1024 / 1024)} MB.` });
-      }
-      return res.status(400).json({ error: err.message });
-    }
-    if (!req.file) return res.status(400).json({ error: 'No video file uploaded' });
-    try {
-      const hw = await pool.query('SELECT 1 FROM module_homework WHERE module_id = $1', [req.params.moduleId]);
-      if (hw.rowCount === 0) {
-        safeUnlinkUpload(req.file.filename);
-        return res.status(400).json({ error: 'This module does not have homework assigned.' });
-      }
-      // Check for an existing submission
-      const existing = await pool.query(
-        `SELECT id, video_url, status FROM homework_submissions WHERE module_id = $1 AND user_id = $2`,
-        [req.params.moduleId, req.user.id]
-      );
-      const studentNotes = (req.body && req.body.student_notes) ? String(req.body.student_notes).slice(0, 2000) : null;
-      const publicUrl = `/uploads/${req.file.filename}`;
-      if (existing.rowCount > 0) {
-        const row = existing.rows[0];
-        if (homeworkIsLocked(row.status)) {
-          // Submission has been graded — cannot replace.
-          safeUnlinkUpload(req.file.filename);
-          return res.status(403).json({
-            error: 'Your submission has already been graded and can no longer be replaced.'
-          });
-        }
-        // Replace: delete the previous file on disk, then update the row.
-        safeUnlinkUpload(filenameFromUrl(row.video_url));
-        const upd = await pool.query(
-          `UPDATE homework_submissions
-              SET video_url = $1, original_filename = $2, mime_type = $3,
-                  size_bytes = $4, student_notes = $5,
-                  status = 'submitted', admin_feedback = NULL,
-                  reviewed_at = NULL, reviewed_by = NULL,
-                  submitted_at = NOW()
-            WHERE id = $6
-            RETURNING id, video_url, original_filename, mime_type, size_bytes,
-                      student_notes, status, admin_feedback, reviewed_at, submitted_at`,
-          [
-            publicUrl,
-            req.file.originalname || null,
-            req.file.mimetype || null,
-            req.file.size || null,
-            studentNotes,
-            row.id
-          ]
-        );
-        return res.json({ replaced: true, submission: upd.rows[0] });
-      }
-      // New submission
-      const ins = await pool.query(
-        `INSERT INTO homework_submissions
-           (module_id, user_id, video_url, original_filename, mime_type, size_bytes, student_notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         RETURNING id, video_url, original_filename, mime_type, size_bytes,
-                   student_notes, status, admin_feedback, reviewed_at, submitted_at`,
-        [
-          req.params.moduleId,
-          req.user.id,
-          publicUrl,
-          req.file.originalname || null,
-          req.file.mimetype || null,
-          req.file.size || null,
-          studentNotes
-        ]
-      );
-      res.json({ replaced: false, submission: ins.rows[0] });
-    } catch (e) {
-      console.error('POST homework submission error', e);
-      res.status(500).json({ error: e.message });
-    }
+  return res.status(410).json({
+    error: 'In-portal homework uploads are no longer accepted. Please email your completed assignment as an attachment to education@numapilatesmiami.com. Include your full name and the module title in the subject line.',
+    email: 'education@numapilatesmiami.com',
+    disabled: true
   });
 });
 
