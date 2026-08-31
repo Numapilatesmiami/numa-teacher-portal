@@ -232,7 +232,8 @@ app.post('/api/auth/login', async (req, res) => {
       token,
       user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email, role: user.role,
               program_track: user.program_track, tuition_status: user.tuition_status,
-              must_reset_password: user.must_reset_password === true }
+              must_reset_password: user.must_reset_password === true,
+              final_exam_unlocked: user.final_exam_unlocked === true }
     });
   } catch (err) {
     console.error(err);
@@ -242,7 +243,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const result = await pool.query(
-    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tos_accepted_at, is_active, must_reset_password FROM users WHERE id = $1',
+    'SELECT id, username, full_name, email, role, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tos_accepted_at, is_active, must_reset_password, final_exam_unlocked, final_exam_unlocked_at FROM users WHERE id = $1',
     [req.user.id]
   );
   const u = result.rows[0];
@@ -868,14 +869,35 @@ app.delete('/api/hours/:id', authRequired, async (req, res) => {
 });
 
 // ===== FINAL EXAM =====
+// Server-side proctor gate. Even if the client is bypassed, the server refuses
+// to record a final-exam attempt unless an admin has flipped
+// final_exam_unlocked = TRUE on the student's user row. Staff can always
+// submit (used for admin previews).
 app.post('/api/final-exam', authRequired, async (req, res) => {
-  const { score, total, time_spent_seconds, attempt_data } = req.body;
-  const result = await pool.query(
-    `INSERT INTO final_exam_attempts (user_id, score, total, time_spent_seconds, attempt_data)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [req.user.id, score, total, time_spent_seconds || null, attempt_data || null]
-  );
-  res.json(result.rows[0]);
+  try {
+    const isStaff = req.user.role === 'admin' || req.user.role === 'teacher';
+    if (!isStaff) {
+      const chk = await pool.query(
+        'SELECT final_exam_unlocked FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (!chk.rows[0] || chk.rows[0].final_exam_unlocked !== true) {
+        return res.status(403).json({
+          error: 'The final exam is proctored. Please schedule your proctored session with NUMA — an admin will unlock the exam for you at the start of the session.'
+        });
+      }
+    }
+    const { score, total, time_spent_seconds, attempt_data } = req.body;
+    const result = await pool.query(
+      `INSERT INTO final_exam_attempts (user_id, score, total, time_spent_seconds, attempt_data)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.user.id, score, total, time_spent_seconds || null, attempt_data || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[final-exam POST]', err);
+    res.status(500).json({ error: 'Failed to record exam attempt' });
+  }
 });
 
 app.get('/api/final-exam', authRequired, async (req, res) => {
@@ -891,6 +913,7 @@ app.get('/api/admin/students', staffRequired, async (_req, res) => {
   const result = await pool.query(`
     SELECT u.id, u.username, u.full_name, u.email, u.enrollment_code, u.created_at,
       u.program_track, u.tuition_status, u.tuition_total, u.tuition_amount_paid, u.tuition_notes,
+      u.final_exam_unlocked, u.final_exam_unlocked_at,
       (SELECT COUNT(*) FROM quiz_scores WHERE user_id = u.id) AS quiz_count,
       (SELECT COUNT(*) FROM scenarios WHERE user_id = u.id) AS scenario_count,
       (SELECT COALESCE(SUM(hours), 0) FROM practice_hours WHERE user_id = u.id) AS total_hours,
@@ -943,7 +966,7 @@ app.patch('/api/admin/students/:id', adminRequired, async (req, res) => {
 });
 
 app.get('/api/admin/students/:id', staffRequired, async (req, res) => {
-  const userRes = await pool.query('SELECT id, username, full_name, email, enrollment_code, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes FROM users WHERE id = $1', [req.params.id]);
+  const userRes = await pool.query('SELECT id, username, full_name, email, enrollment_code, created_at, program_track, tuition_status, tuition_total, tuition_amount_paid, tuition_notes, final_exam_unlocked, final_exam_unlocked_at FROM users WHERE id = $1', [req.params.id]);
   if (userRes.rowCount === 0) return res.status(404).json({ error: 'Not found' });
   const quizRes = await pool.query('SELECT * FROM quiz_scores WHERE user_id = $1 ORDER BY completed_at DESC', [req.params.id]);
   const scenRes = await pool.query('SELECT * FROM scenarios WHERE user_id = $1 ORDER BY submitted_at DESC', [req.params.id]);
@@ -1074,6 +1097,41 @@ app.put('/api/auth/password', authRequired, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Password change failed' });
+  }
+});
+
+// ===== ADMIN: UNLOCK / RE-LOCK PROCTORED FINAL EXAM =====
+// The final exam is proctored: students cannot start it until an admin
+// unlocks it here. `unlocked` may be TRUE (open the gate) or FALSE (close it
+// again — e.g. after a proctored session). Also fires a notification to the
+// student so they see the bell light up. Never touches quiz scores, hours,
+// module progress, or previously-recorded exam attempts.
+app.put('/api/admin/students/:id/final-exam-unlock', staffRequired, async (req, res) => {
+  try {
+    const unlocked = req.body?.unlocked !== false; // default TRUE
+    const result = await pool.query(
+      `UPDATE users
+         SET final_exam_unlocked = $1,
+             final_exam_unlocked_at = CASE WHEN $1 THEN NOW() ELSE final_exam_unlocked_at END,
+             final_exam_unlocked_by = CASE WHEN $1 THEN $2 ELSE final_exam_unlocked_by END
+       WHERE id = $3
+       RETURNING id, username, full_name, final_exam_unlocked, final_exam_unlocked_at`,
+      [unlocked, req.user.id, req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Student not found' });
+    // Fire a notification so the student sees the bell.
+    if (unlocked) {
+      notify(req.params.id, {
+        type: 'final_exam_unlocked',
+        title: 'Final exam unlocked',
+        body: 'Your proctor has opened the final certification exam. You can begin when ready.',
+        link_view: 'exam'
+      }).catch(() => {});
+    }
+    res.json({ ok: true, user: result.rows[0] });
+  } catch (err) {
+    console.error('[final-exam-unlock]', err);
+    res.status(500).json({ error: 'Failed to update final-exam lock' });
   }
 });
 
@@ -1945,6 +2003,21 @@ app.post('/api/questions', authRequired, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [req.user.id, subject || null, body.trim(), module_id || null, section_id || null]
     );
+    // Notify staff (admins + teachers) so their bell lights up on new inbox message.
+    try {
+      const u = await pool.query('SELECT full_name, username FROM users WHERE id = $1', [req.user.id]);
+      const author = u.rows[0] || {};
+      const name = author.full_name || author.username || 'A student';
+      const preview = body.trim().slice(0, 200);
+      const subj = (subject && subject.trim()) ? subject.trim().slice(0, 120) : '(No subject)';
+      notifyStaff({
+        type: 'inbox_message',
+        title: `${name} sent a new message: “${subj}”`,
+        body: preview,
+        link_view: 'admin',
+        link_params: { view: 'inbox' }
+      }).catch(() => {});
+    } catch (e) { /* non-fatal */ }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -2031,6 +2104,31 @@ app.post('/api/questions/:id/replies', authRequired, async (req, res) => {
       `UPDATE student_questions SET status = $1, updated_at = NOW() WHERE id = $2`,
       [newStatus, req.params.id]
     );
+    // Fire notifications so the recipient's bell lights up:
+    //   • Staff reply  → notify the student who owns the thread
+    //   • Student reply → notify all staff (admins + teachers)
+    try {
+      const u = await pool.query('SELECT full_name, username FROM users WHERE id = $1', [req.user.id]);
+      const author = u.rows[0] || {};
+      const name = author.full_name || author.username || (isStaff ? 'NUMA staff' : 'A student');
+      const preview = body.trim().slice(0, 200);
+      if (isStaff) {
+        notify(qRes.rows[0].user_id, {
+          type: 'inbox_reply',
+          title: `${name} replied to your message`,
+          body: preview,
+          link_view: 'inbox'
+        }).catch(() => {});
+      } else {
+        notifyStaff({
+          type: 'inbox_reply',
+          title: `${name} replied in the inbox`,
+          body: preview,
+          link_view: 'admin',
+          link_params: { view: 'inbox' }
+        }).catch(() => {});
+      }
+    } catch (e) { /* non-fatal */ }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

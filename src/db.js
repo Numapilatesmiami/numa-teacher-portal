@@ -363,6 +363,14 @@ export async function initDatabase() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_amount_paid NUMERIC(10,2) DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tuition_notes TEXT;
 
+      -- Proctored final exam gate. Default FALSE — students cannot start the
+      -- final exam until an admin flips this to TRUE (from the admin student
+      -- detail page). Preserves any completed attempts — this only blocks
+      -- starting a NEW attempt. Never touches quiz scores, hours, or progress.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS final_exam_unlocked BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS final_exam_unlocked_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS final_exam_unlocked_by INTEGER;
+
       -- Discussion topics: each top-level forum post is a topic with a title.
       ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS title TEXT;
 

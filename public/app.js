@@ -351,7 +351,10 @@ async function handleLogin() {
           role: result.user.role,
           full_name: result.user.full_name,
           email: result.user.email,
-          must_reset_password: result.user.must_reset_password === true
+          must_reset_password: result.user.must_reset_password === true,
+          // Server-controlled proctor gate for the final exam. See
+          // refreshFinalExamUnlock() below for how this stays fresh mid-session.
+          final_exam_unlocked: result.user.final_exam_unlocked === true
         });
         saveSession({ username: user });
         navigate('dashboard');
@@ -1128,7 +1131,39 @@ function deleteHourEntry(type, idx) {
 }
 
 // ===== FINAL EXAM =====
+// Best-effort background refresh of the proctor-unlock flag. Called whenever
+// the student lands on the exam page so that once a proctor unlocks the
+// exam server-side, the student sees the "Begin Exam" button appear within
+// a few seconds — no logout/login required.
+let _numaExamPoll = null;
+async function refreshFinalExamUnlock() {
+  try {
+    if (!APP.currentUser || APP.currentUser.isAdmin) return;
+    if (typeof API_BASE === 'undefined' || API_BASE === null) return;
+    const me = await apiCall('/api/auth/me');
+    if (!me) return;
+    const prev = APP.currentUser.final_exam_unlocked === true;
+    const next = me.final_exam_unlocked === true;
+    APP.currentUser.final_exam_unlocked = next;
+    // Re-render only if the flag actually flipped AND we're on the exam page.
+    if (prev !== next && APP.view === 'exam') { try { render(); } catch (_) {} }
+  } catch (_) { /* silent */ }
+}
+window.refreshFinalExamUnlock = refreshFinalExamUnlock;
+function startFinalExamPoll() {
+  if (_numaExamPoll) return;
+  refreshFinalExamUnlock();
+  _numaExamPoll = setInterval(refreshFinalExamUnlock, 15000);
+}
+function stopFinalExamPoll() {
+  if (_numaExamPoll) { clearInterval(_numaExamPoll); _numaExamPoll = null; }
+}
+window.startFinalExamPoll = startFinalExamPoll;
+window.stopFinalExamPoll = stopFinalExamPoll;
+
 function renderExamPage() {
+  // Kick off / stop the unlock-poll based on view.
+  if (APP.view === 'exam') startFinalExamPoll();
   const user = APP.currentUser;
 
   if (user.examPassed) {
@@ -1151,6 +1186,23 @@ function renderExamPage() {
         <ul style="text-align:left;display:inline-block;">
           ${incomplete.map(m => `<li>Module ${m.id}: ${m.title}</li>`).join('')}
         </ul>
+      </div>
+    </div>`;
+  }
+
+  // Proctor gate: even if all modules are passed, the final exam only opens
+  // when an admin has manually unlocked it for this student. The server
+  // enforces this too — the client check is just to show a friendlier page.
+  // Staff (admin / teacher) can preview without the gate.
+  const isStaff = user.role === 'admin' || user.role === 'teacher' || user.isAdmin;
+  if (!isStaff && user.final_exam_unlocked !== true) {
+    return `<div class="exam-header fade-in">
+      <h1>Final Certification Exam</h1>
+      <div class="locked-overlay" style="padding:20px;">
+        <i class="fa-solid fa-user-shield"></i>
+        <h3>Proctored Exam — Scheduling Required</h3>
+        <p>You've completed every module. The final certification exam is proctored and can only be taken during a scheduled session with a NUMA proctor.</p>
+        <p class="mt-2">Please email <a href="mailto:education@numapilatesmiami.com">education@numapilatesmiami.com</a> to schedule your proctored exam. Your proctor will unlock the exam here at the start of your session.</p>
       </div>
     </div>`;
   }
@@ -3258,7 +3310,7 @@ async function adminResetStudentPassword(studentId, studentName) {
   }
 })();
 
-// ===== Add 'Reset Password' button on admin student detail page =====
+// ===== Add 'Reset Password' + 'Unlock Final Exam' buttons on admin student detail page =====
 (function patchAdminStudentDetail() {
   if (typeof renderAdminStudentDetail !== 'function') return;
   const _orig = renderAdminStudentDetail;
@@ -3268,10 +3320,21 @@ async function adminResetStudentPassword(studentId, studentName) {
     if (!u) return html;
     const studentId = u.id || username;
     const studentName = (u.fullName || u.full_name || u.username || '').replace(/'/g, "\\'");
-    // Insert a reset button next to the breadcrumb area
+    // Prefer live server-side flag if it was fetched. Falls back to a fresh
+    // fetch on demand (renderExamUnlockButton handles that).
+    const isUnlocked = !!u.final_exam_unlocked;
+    const unlockedAt = u.final_exam_unlocked_at
+      ? new Date(u.final_exam_unlocked_at).toLocaleString()
+      : null;
     const button = `
-      <div style="margin:0 0 18px 0;display:flex;gap:8px;flex-wrap:wrap;">
+      <div id="numa-student-actions" style="margin:0 0 18px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <button class="btn btn-secondary btn-sm" onclick="adminResetStudentPassword('${studentId}','${studentName}')"><i class="fa-solid fa-key"></i> Reset Password</button>
+        <button class="btn ${isUnlocked ? 'btn-secondary' : 'btn-primary'} btn-sm"
+                onclick="adminToggleFinalExamUnlock('${studentId}','${studentName}', ${!isUnlocked})">
+          <i class="fa-solid fa-${isUnlocked ? 'lock' : 'unlock'}"></i>
+          ${isUnlocked ? 'Re-lock Final Exam' : 'Unlock Final Exam (Proctor)'}
+        </button>
+        ${isUnlocked && unlockedAt ? `<span class="text-muted" style="font-size:12px;">Unlocked ${unlockedAt}</span>` : ''}
       </div>
     `;
     html = html.replace('<div class="stats-grid slide-up">', button + '<div class="stats-grid slide-up">');
@@ -3279,6 +3342,42 @@ async function adminResetStudentPassword(studentId, studentName) {
   };
   renderAdminStudentDetail = window.renderAdminStudentDetail;
 })();
+
+// Admin: toggle proctored final-exam gate for one student.
+// Confirms before opening the exam (irreversible in the sense that once it's
+// open a student can start a live attempt) and again before re-locking after.
+async function adminToggleFinalExamUnlock(studentId, studentName, wantUnlocked) {
+  const action = wantUnlocked ? 'unlock' : 're-lock';
+  const detail = wantUnlocked
+    ? `Unlock the final certification exam for ${studentName}?\n\nOnly do this at the start of a scheduled proctored session. The student can begin the exam within ~15 seconds of clicking OK.`
+    : `Re-lock the final exam for ${studentName}?\n\nThey won't be able to start a new attempt. Attempts already recorded stay intact.`;
+  if (!window.confirm(detail)) return;
+  try {
+    const res = await apiCall(`/api/admin/students/${studentId}/final-exam-unlock`, {
+      method: 'PUT',
+      body: JSON.stringify({ unlocked: wantUnlocked })
+    });
+    if (!res || res.error) {
+      alert((res && res.error) || `Failed to ${action} final exam.`);
+      return;
+    }
+    // Reflect immediately in the cached student data, then re-render.
+    const local = (typeof getUserData === 'function') ? getUserData(studentName) : null;
+    if (local) {
+      local.final_exam_unlocked = wantUnlocked;
+      local.final_exam_unlocked_at = res.user?.final_exam_unlocked_at || (wantUnlocked ? new Date().toISOString() : null);
+      if (typeof saveUserData === 'function') saveUserData(local);
+    }
+    if (typeof render === 'function') render();
+    // If the admin dashboard has a students-list cache, invalidate it so
+    // the badge on the list view updates on next visit.
+    if (window.NUMA_ADMIN_STUDENTS) window.NUMA_ADMIN_STUDENTS = null;
+  } catch (err) {
+    console.error('[final-exam-unlock]', err);
+    alert(`Failed to ${action} final exam.`);
+  }
+}
+window.adminToggleFinalExamUnlock = adminToggleFinalExamUnlock;
 
 // =============================================================================
 // ===== NEW FEATURES (May 2026): Progress, Section Quizzes, Q&A, Forum ========
@@ -5648,12 +5747,19 @@ async function syncStudentsFromBackend() {
       existing.createdAt = row.created_at || existing.createdAt;
       existing.enrollmentCode = row.enrollment_code || existing.enrollmentCode;
       existing.backendId = row.id;
+      existing.id = row.id;
+      // Proctor gate for final exam — server-authoritative.
+      existing.final_exam_unlocked = row.final_exam_unlocked === true;
+      existing.final_exam_unlocked_at = row.final_exam_unlocked_at || null;
     } else {
       const fresh = createDefaultUserData(row.username, row.full_name || row.username);
       fresh.email = row.email || '';
       fresh.createdAt = row.created_at || new Date().toISOString();
       fresh.enrollmentCode = row.enrollment_code || '';
       fresh.backendId = row.id;
+      fresh.id = row.id;
+      fresh.final_exam_unlocked = row.final_exam_unlocked === true;
+      fresh.final_exam_unlocked_at = row.final_exam_unlocked_at || null;
       local.push(fresh);
       byUsername[row.username] = fresh;
     }
