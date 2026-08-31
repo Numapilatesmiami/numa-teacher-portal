@@ -372,8 +372,33 @@ async function handleLogin() {
 }
 
 // ===== ENROLLMENT CODES =====
-// Add or change codes here. Students must enter one of these to register.
-const VALID_ENROLLMENT_CODES = ['NUMA2026', 'NUMPILATES', 'NUMAREFORMER'];
+// Fallback codes used only if the backend list can't be reached.
+// The real source of truth is the admin "Enrollment Codes" page, which writes
+// to /api/admin/enrollment-codes. To manage codes, use that page — don't add
+// codes here unless you're intentionally bypassing the admin list.
+const VALID_ENROLLMENT_CODES = [
+  'NUMA2026', 'NUMPILATES', 'NUMAREFORMER',
+  'MATREFFALL2026', 'MATREFFALL26',
+];
+
+// Fetch active codes from the backend admin list (populated via the admin UI).
+// Returns an array of uppercase code strings, or null if the request fails.
+async function fetchActiveEnrollmentCodes() {
+  try {
+    const base = (typeof API_BASE !== 'undefined' && API_BASE) ? API_BASE : (window.API_BASE || '');
+    // This endpoint is publicly readable of active codes only; no token required.
+    const res = await fetch(base + '/api/public/enrollment-codes').catch(() => null);
+    if (!res || !res.ok) return null;
+    const rows = await res.json().catch(() => null);
+    if (!Array.isArray(rows)) return null;
+    return rows
+      .filter(r => r && r.is_active !== false)
+      .map(r => String(r.code || '').trim().toUpperCase())
+      .filter(Boolean);
+  } catch (_) {
+    return null;
+  }
+}
 
 async function handleRegister() {
   const code = document.getElementById('reg-code').value.trim().toUpperCase();
@@ -388,7 +413,14 @@ async function handleRegister() {
     errEl.style.display = 'block';
     return;
   }
-  if (!VALID_ENROLLMENT_CODES.includes(code)) {
+
+  // Prefer the live backend list; fall back to the hardcoded set if unreachable.
+  const liveCodes = await fetchActiveEnrollmentCodes();
+  const allowedCodes = (liveCodes && liveCodes.length)
+    ? Array.from(new Set([...liveCodes, ...VALID_ENROLLMENT_CODES]))
+    : VALID_ENROLLMENT_CODES;
+
+  if (!allowedCodes.includes(code)) {
     errEl.textContent = 'Invalid enrollment code. Please contact your instructor for a valid code.';
     errEl.style.display = 'block';
     return;

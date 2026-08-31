@@ -341,6 +341,15 @@ export async function initDatabase() {
       `);
     }
 
+    // Ensure the Fall 2026 Mat Referral code exists and is active. Idempotent:
+    // inserts if missing, does nothing if it already exists (does NOT overwrite
+    // an admin-edited row).
+    await client.query(`
+      INSERT INTO enrollment_codes (code, label, pathway, is_active)
+      VALUES ('MATREFFALL2026', 'Mat referral — Fall 2026', 'mat', TRUE)
+      ON CONFLICT (code) DO NOTHING
+    `);
+
     // ===== SAFE MIGRATIONS (additive only — never drops data) =====
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
