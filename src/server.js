@@ -958,6 +958,23 @@ app.delete('/api/admin/students/:id', adminRequired, async (req, res) => {
 });
 
 // ===== ENROLLMENT CODES =====
+// Public: minimal list of ACTIVE codes only, used by the registration form to
+// validate the code before hitting /api/auth/register. Returns just the code
+// string and is_active flag — no labels, student counts, or pathway internals.
+app.get('/api/public/enrollment-codes', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT code, is_active FROM enrollment_codes WHERE is_active = true`
+    );
+    // Cache 60s at the CDN so this endpoint doesn't get hammered.
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[enrollment-codes:public]', err);
+    res.status(500).json({ error: 'Could not load enrollment codes' });
+  }
+});
+
 app.get('/api/admin/enrollment-codes', adminRequired, async (_req, res) => {
   const result = await pool.query(`
     SELECT c.*, COUNT(u.id) AS student_count
