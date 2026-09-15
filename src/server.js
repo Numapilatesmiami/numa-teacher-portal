@@ -868,6 +868,157 @@ app.delete('/api/hours/:id', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== HYDRATION =====
+// Return everything the current user needs to rebuild their local progress
+// on ANY device — mobile, tablet, or a browser they haven't used before.
+// The frontend calls this right after login and on dashboard load so hours
+// logged on a phone show up on a laptop and vice-versa. Only the caller's
+// OWN progress is returned; no cross-user leakage.
+app.get('/api/my/progress', authRequired, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const [quizRes, hoursRes, scenRes, examRes, hwRes] = await Promise.all([
+      // Take the BEST attempt per module (matches the frontend rule
+      // "only replace quizScores[module] with a higher score").
+      pool.query(`
+        SELECT module_id,
+               MAX(ROUND((score::numeric / NULLIF(total,0)) * 100)) AS best_pct,
+               MAX(completed_at) AS last_at
+        FROM quiz_scores
+        WHERE user_id = $1 AND total > 0
+        GROUP BY module_id
+      `, [uid]),
+      pool.query(`
+        SELECT id, category, hours, notes, logged_at
+        FROM practice_hours WHERE user_id = $1 ORDER BY logged_at DESC
+      `, [uid]),
+      pool.query(`
+        SELECT id, scenario_id, response, word_count, score, feedback, flagged, submitted_at, graded_at
+        FROM scenarios WHERE user_id = $1 ORDER BY submitted_at DESC
+      `, [uid]),
+      pool.query(`
+        SELECT id, score, total, passed, completed_at
+        FROM final_exam_attempts WHERE user_id = $1 ORDER BY completed_at DESC
+      `, [uid]),
+      pool.query(`
+        SELECT module_id, is_complete, note, marked_at
+        FROM homework_completion WHERE student_id = $1
+      `, [uid])
+    ]);
+
+    // Build the shape the frontend already uses.
+    const quizScores = {};
+    quizRes.rows.forEach(r => {
+      if (r.best_pct !== null) quizScores[r.module_id] = Number(r.best_pct);
+    });
+
+    // Group hours by category into { observation:[], teaching:[], personal:[] }.
+    const hourLogs = { observation: [], teaching: [], personal: [] };
+    hoursRes.rows.forEach(row => {
+      const cat = hourLogs[row.category] ? row.category : 'personal';
+      let parsed = {};
+      if (row.notes) { try { parsed = JSON.parse(row.notes); } catch (_) { parsed = { note: row.notes }; } }
+      hourLogs[cat].push({
+        id: row.id,
+        hours: Number(row.hours),
+        date: parsed.date || (row.logged_at ? new Date(row.logged_at).toISOString().slice(0,10) : null),
+        ...parsed,
+        loggedAt: row.logged_at
+      });
+    });
+
+    // Best final-exam attempt.
+    let examPassed = false;
+    let examScore = null;
+    examRes.rows.forEach(r => {
+      const pct = r.total > 0 ? Math.round((r.score / r.total) * 100) : 0;
+      if (r.passed) examPassed = true;
+      if (examScore === null || pct > examScore) examScore = pct;
+    });
+
+    const homeworkCompletion = {};
+    hwRes.rows.forEach(r => {
+      homeworkCompletion[r.module_id] = {
+        complete: !!r.is_complete,
+        note: r.note || '',
+        markedAt: r.marked_at
+      };
+    });
+
+    res.json({
+      quizScores,
+      hourLogs,
+      scenarioSubmissions: scenRes.rows.map(s => ({
+        id: s.id,
+        scenarioId: s.scenario_id,
+        response: s.response,
+        wordCount: s.word_count,
+        grade: s.score,
+        feedback: s.feedback,
+        submittedAt: s.submitted_at,
+        gradedAt: s.graded_at
+      })),
+      examPassed,
+      examScore,
+      homeworkCompletion
+    });
+  } catch (e) {
+    console.error('[my/progress]', e);
+    res.status(500).json({ error: 'progress hydration failed' });
+  }
+});
+
+// ===== HOMEWORK COMPLETION (staff checklist) =====
+// Staff marks a student's per-module homework as complete/incomplete, with
+// an optional short note. Distinct from the video-upload homework_submissions
+// table — this is the manual staff check, useful when homework is submitted
+// by email or in person.
+app.get('/api/admin/homework-completion', staffRequired, async (_req, res) => {
+  const r = await pool.query(`
+    SELECT student_id, module_id, is_complete, note, marked_at
+    FROM homework_completion
+  `);
+  res.json(r.rows);
+});
+
+app.put('/api/admin/homework-completion', staffRequired, async (req, res) => {
+  try {
+    const { student_id, module_id, is_complete, note } = req.body || {};
+    if (!student_id || !module_id) {
+      return res.status(400).json({ error: 'student_id and module_id required' });
+    }
+    const complete = is_complete === true;
+    const trimmedNote = (note == null) ? null : String(note).slice(0, 500);
+    const r = await pool.query(`
+      INSERT INTO homework_completion (student_id, module_id, is_complete, note, marked_by, marked_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (student_id, module_id)
+      DO UPDATE SET
+        is_complete = EXCLUDED.is_complete,
+        note = EXCLUDED.note,
+        marked_by = EXCLUDED.marked_by,
+        marked_at = NOW()
+      RETURNING *
+    `, [student_id, module_id, complete, trimmedNote, req.user.id]);
+    // Notify student when newly marked complete.
+    if (complete) {
+      try {
+        await notify(student_id, {
+          type: 'homework_marked_complete',
+          title: `Module ${module_id} homework marked complete`,
+          body: trimmedNote ? String(trimmedNote).slice(0, 240) : 'Your instructor marked your homework as complete.',
+          link_view: 'gradebook',
+          link_params: null
+        });
+      } catch (_) { /* best effort */ }
+    }
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('[homework-completion PUT]', e);
+    res.status(500).json({ error: 'update failed' });
+  }
+});
+
 // ===== FINAL EXAM =====
 // Server-side proctor gate. Even if the client is bypassed, the server refuses
 // to record a final-exam attempt unless an admin has flipped
@@ -909,20 +1060,110 @@ app.get('/api/final-exam', authRequired, async (req, res) => {
 });
 
 // ===== ADMIN: STUDENTS =====
+// Returns one row per student PLUS the per-module best quiz percentage,
+// scenario average, best final exam attempt, and total hours by category —
+// everything the admin gradebook needs to render without any per-student
+// follow-up calls.
 app.get('/api/admin/students', staffRequired, async (_req, res) => {
-  const result = await pool.query(`
+  const usersRes = await pool.query(`
     SELECT u.id, u.username, u.full_name, u.email, u.enrollment_code, u.created_at,
       u.program_track, u.tuition_status, u.tuition_total, u.tuition_amount_paid, u.tuition_notes,
-      u.final_exam_unlocked, u.final_exam_unlocked_at,
-      (SELECT COUNT(*) FROM quiz_scores WHERE user_id = u.id) AS quiz_count,
-      (SELECT COUNT(*) FROM scenarios WHERE user_id = u.id) AS scenario_count,
-      (SELECT COALESCE(SUM(hours), 0) FROM practice_hours WHERE user_id = u.id) AS total_hours,
-      (SELECT MAX(score::float / total::float * 100) FROM final_exam_attempts WHERE user_id = u.id) AS best_exam_pct
+      u.final_exam_unlocked, u.final_exam_unlocked_at
     FROM users u
     WHERE u.role = 'student'
     ORDER BY u.created_at DESC
   `);
-  res.json(result.rows);
+  const users = usersRes.rows;
+  if (users.length === 0) return res.json([]);
+  const ids = users.map(u => u.id);
+
+  // Best-percentage per (student, module).
+  const quizRes = await pool.query(`
+    SELECT user_id, module_id,
+           MAX(ROUND((score::numeric / NULLIF(total,0)) * 100)) AS best_pct
+    FROM quiz_scores
+    WHERE user_id = ANY($1::int[]) AND total > 0
+    GROUP BY user_id, module_id
+  `, [ids]);
+  const quizByUser = {};
+  quizRes.rows.forEach(r => {
+    (quizByUser[r.user_id] ||= {})[r.module_id] = Number(r.best_pct);
+  });
+
+  // Per-category hours totals.
+  const hoursRes = await pool.query(`
+    SELECT user_id, category, COALESCE(SUM(hours), 0) AS total
+    FROM practice_hours
+    WHERE user_id = ANY($1::int[])
+    GROUP BY user_id, category
+  `, [ids]);
+  const hoursByUser = {};
+  hoursRes.rows.forEach(r => {
+    (hoursByUser[r.user_id] ||= {})[r.category] = Number(r.total);
+  });
+
+  // Scenario average + count.
+  const scenRes = await pool.query(`
+    SELECT user_id, COUNT(*)::int AS count, AVG(score)::float AS avg_score
+    FROM scenarios
+    WHERE user_id = ANY($1::int[])
+    GROUP BY user_id
+  `, [ids]);
+  const scenByUser = {};
+  scenRes.rows.forEach(r => {
+    scenByUser[r.user_id] = { count: r.count, avg: r.avg_score };
+  });
+
+  // Best final exam attempt.
+  const examRes = await pool.query(`
+    SELECT user_id,
+           MAX(ROUND((score::numeric / NULLIF(total,0)) * 100)) AS best_pct,
+           BOOL_OR(passed) AS ever_passed
+    FROM final_exam_attempts
+    WHERE user_id = ANY($1::int[]) AND total > 0
+    GROUP BY user_id
+  `, [ids]);
+  const examByUser = {};
+  examRes.rows.forEach(r => {
+    examByUser[r.user_id] = { pct: r.best_pct != null ? Number(r.best_pct) : null, passed: !!r.ever_passed };
+  });
+
+  // Homework completion.
+  const hwRes = await pool.query(`
+    SELECT student_id, module_id, is_complete, note, marked_at
+    FROM homework_completion
+    WHERE student_id = ANY($1::int[])
+  `, [ids]);
+  const hwByUser = {};
+  hwRes.rows.forEach(r => {
+    (hwByUser[r.student_id] ||= {})[r.module_id] = {
+      complete: !!r.is_complete,
+      note: r.note || '',
+      marked_at: r.marked_at
+    };
+  });
+
+  const enriched = users.map(u => {
+    const hours = hoursByUser[u.id] || {};
+    const totalHours = Object.values(hours).reduce((a, b) => a + b, 0);
+    const scen = scenByUser[u.id] || { count: 0, avg: null };
+    const exam = examByUser[u.id] || { pct: null, passed: false };
+    return {
+      ...u,
+      // legacy fields the old admin UI reads
+      quiz_count: Object.keys(quizByUser[u.id] || {}).length,
+      scenario_count: scen.count,
+      total_hours: totalHours,
+      best_exam_pct: exam.pct,
+      // rich progress payload for the gradebook
+      quiz_scores_by_module: quizByUser[u.id] || {},
+      hours_by_category: hours,
+      scenario_avg: scen.avg,
+      exam_passed: exam.passed,
+      homework_completion: hwByUser[u.id] || {}
+    };
+  });
+  res.json(enriched);
 });
 
 // Admin: update enrollment metadata for one student
