@@ -371,22 +371,6 @@ export async function initDatabase() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS final_exam_unlocked_at TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS final_exam_unlocked_by INTEGER;
 
-      -- Homework completion checklist. One row per (student, module) tracks
-      -- whether staff has marked that module's homework as complete. Optional
-      -- short note. Distinct from homework_submissions (video uploads) — this
-      -- is the manual staff check, so it works even for homework that was
-      -- submitted by email or in person.
-      CREATE TABLE IF NOT EXISTS homework_completion (
-        student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        module_id INTEGER NOT NULL,
-        is_complete BOOLEAN NOT NULL DEFAULT FALSE,
-        note TEXT,
-        marked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (student_id, module_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_homework_completion_student ON homework_completion(student_id);
-
       -- Discussion topics: each top-level forum post is a topic with a title.
       ALTER TABLE forum_posts ADD COLUMN IF NOT EXISTS title TEXT;
 

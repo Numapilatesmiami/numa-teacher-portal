@@ -357,14 +357,6 @@ async function handleLogin() {
           final_exam_unlocked: result.user.final_exam_unlocked === true
         });
         saveSession({ username: user });
-        // Pull the student's server-side progress BEFORE first render, so
-        // hours + quizzes logged on another device are visible immediately.
-        // Falls back silently if the endpoint isn't available yet.
-        if (typeof window.hydrateMyProgressFromServer === 'function') {
-          try {
-            await window.hydrateMyProgressFromServer(true);
-          } catch (_) { /* silent — dashboard still renders from local */ }
-        }
         navigate('dashboard');
       }
       return;
@@ -2257,134 +2249,53 @@ renderSidebar = window.renderSidebar;
 // Admin Gradebook
 function renderAdminGradebook() {
   const users = getUsers().filter(u => u.username !== 'admin');
-
-  let html = '<div class="page-header fade-in"><h1>Gradebook</h1><p>Weighted grading: Module Quizzes (40%) + Final Exam (35%) + Scenarios (25%). Homework columns are a manual checklist — they do NOT affect the letter grade.</p></div>';
-
-  html += '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">' +
+  
+  let html = '<div class="page-header fade-in"><h1>Gradebook</h1><p>Weighted grading: Module Quizzes (40%) + Final Exam (35%) + Scenarios (25%)</p></div>';
+  
+  html += '<div style="display:flex;gap:12px;margin-bottom:20px;">' +
     '<button class="btn btn-secondary" onclick="navigate(\'admin\')"><i class="fa-solid fa-arrow-left"></i> All Students</button>' +
     '<button class="btn btn-secondary" onclick="navigate(\'admin\',{view:\'plagiarism\'})"><i class="fa-solid fa-flag"></i> Plagiarism Check</button>' +
-    '<button class="btn btn-secondary" onclick="toggleGradebookHomeworkView()"><i class="fa-solid fa-list-check"></i> <span id="hw-toggle-label">Show Homework Checklist</span></button>' +
     '</div>';
-
+  
   if (users.length === 0) {
     html += '<div class="card"><div class="card-body text-center text-muted">No students registered.</div></div>';
     return html;
   }
-
-  const showHomework = window._numaGradebookShowHomework === true;
-
+  
   html += '<div class="card"><div class="card-body" style="padding:0;overflow-x:auto;"><table class="admin-table"><thead><tr>' +
     '<th>Student</th>';
   COURSE_MODULES.forEach(m => {
-    html += '<th style="text-align:center;font-size:11px;">M' + m.id + (showHomework ? '<br><span style="font-weight:400;color:var(--charcoal-muted);">HW</span>' : '') + '</th>';
+    html += '<th style="text-align:center;font-size:11px;">M' + m.id + '</th>';
   });
   html += '<th style="text-align:center;">Quiz Avg</th><th style="text-align:center;">Exam</th><th style="text-align:center;">Scenarios</th><th style="text-align:center;">Overall</th><th style="text-align:center;">Grade</th></tr></thead><tbody>';
-
+  
   users.forEach(u => {
     const grade = calculateOverallGrade(u);
     const quizScores = [];
-    const hw = u.homeworkCompletion || {};
-    const studentIdent = String(u.id || u.backendId || u.username).replace(/'/g, "\\'");
-    const studentName = String(u.fullName || u.username).replace(/'/g, "\\'");
-
-    html += '<tr><td><strong>' + escapeHtml(u.fullName || u.username) + '</strong></td>';
+    
+    html += '<tr><td><strong>' + (u.fullName || u.username) + '</strong></td>';
     COURSE_MODULES.forEach(m => {
       const score = u.quizScores ? u.quizScores[m.id] : null;
       if (score !== null && score !== undefined) quizScores.push(score);
       const color = score >= 80 ? 'var(--success)' : score ? 'var(--error)' : 'var(--charcoal-muted)';
-      const scoreHtml = '<div style="color:' + color + ';font-size:12px;">' + (score !== null && score !== undefined ? score + '%' : '—') + '</div>';
-      let hwHtml = '';
-      if (showHomework) {
-        const entry = hw[m.id] || { complete: false, note: '' };
-        const complete = !!entry.complete;
-        const note = (entry.note || '').replace(/"/g, '&quot;');
-        hwHtml = '<div style="margin-top:4px;" title="' + (note || (complete ? 'Marked complete' : 'Not marked')) + '">' +
-          '<input type="checkbox" ' + (complete ? 'checked' : '') +
-          ' onclick="adminToggleHomeworkComplete(event, \'' + studentIdent + '\', \'' + studentName + '\', ' + m.id + ')" ' +
-          'style="cursor:pointer;transform:scale(1.15);" />' +
-          (note ? '<div style="font-size:10px;color:var(--charcoal-muted);margin-top:2px;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(note) + '</div>' : '') +
-          '</div>';
-      }
-      html += '<td style="text-align:center;">' + scoreHtml + hwHtml + '</td>';
+      html += '<td style="text-align:center;color:' + color + ';font-size:12px;">' + (score !== null && score !== undefined ? score + '%' : '—') + '</td>';
     });
-
+    
     const quizAvg = quizScores.length > 0 ? Math.round(quizScores.reduce((a,b)=>a+b,0)/quizScores.length) : 0;
     const scenarioGrades = (u.scenarioSubmissions || []).filter(s => s.grade !== null && s.grade !== undefined).map(s => s.grade);
     const scenarioAvg = scenarioGrades.length > 0 ? Math.round(scenarioGrades.reduce((a,b)=>a+b,0)/scenarioGrades.length) : null;
-
+    
     html += '<td style="text-align:center;">' + (quizScores.length > 0 ? quizAvg + '%' : '—') + '</td>';
-    html += '<td style="text-align:center;">' + (u.examPassed ? (u.examScore || 0) + '%' : '—') + '</td>';
+    html += '<td style="text-align:center;">' + (u.examPassed ? u.examScore + '%' : '—') + '</td>';
     html += '<td style="text-align:center;">' + (scenarioAvg !== null ? scenarioAvg + '%' : '—') + '</td>';
     html += '<td style="text-align:center;font-weight:700;">' + (grade.hasWork ? grade.pct + '%' : '—') + '</td>';
     html += '<td style="text-align:center;font-weight:700;font-size:1.1rem;color:' + getGradeColor(grade.letter) + '">' + grade.letter + '</td>';
     html += '</tr>';
   });
-
+  
   html += '</tbody></table></div></div>';
   return html;
 }
-
-// Toggle the homework-checklist columns in the admin gradebook.
-function toggleGradebookHomeworkView() {
-  window._numaGradebookShowHomework = !window._numaGradebookShowHomework;
-  if (typeof render === 'function') render();
-}
-window.toggleGradebookHomeworkView = toggleGradebookHomeworkView;
-
-// Staff: mark a student's per-module homework complete/incomplete, with
-// an optional short note. Called from the gradebook checkbox.
-async function adminToggleHomeworkComplete(evt, studentId, studentName, moduleId) {
-  if (evt) { evt.stopPropagation(); evt.preventDefault(); }
-  const users = getUsers();
-  const student = users.find(u => String(u.id) === String(studentId) || String(u.backendId) === String(studentId) || u.username === studentId);
-  const currently = !!(student && student.homeworkCompletion && student.homeworkCompletion[moduleId] && student.homeworkCompletion[moduleId].complete);
-  const wantComplete = !currently;
-  const existingNote = student && student.homeworkCompletion && student.homeworkCompletion[moduleId] && student.homeworkCompletion[moduleId].note || '';
-  let note = existingNote;
-  if (wantComplete) {
-    const entered = window.prompt('Marking Module ' + moduleId + ' homework as COMPLETE for ' + studentName + '.\n\nOptional short note (visible to the student):', existingNote || '');
-    if (entered === null) {
-      // User cancelled — restore the checkbox and bail.
-      if (evt && evt.target) evt.target.checked = currently;
-      return;
-    }
-    note = entered.slice(0, 500);
-  } else {
-    if (!window.confirm('Un-mark Module ' + moduleId + ' homework for ' + studentName + '?')) {
-      if (evt && evt.target) evt.target.checked = currently;
-      return;
-    }
-    note = '';
-  }
-  try {
-    const r = await apiCall('/api/admin/homework-completion', {
-      method: 'PUT',
-      body: JSON.stringify({
-        student_id: Number(studentId) || (student && student.id),
-        module_id: Number(moduleId),
-        is_complete: wantComplete,
-        note: note
-      })
-    });
-    if (!r || r.error) {
-      alert((r && r.error) || 'Failed to save. Please try again.');
-      if (evt && evt.target) evt.target.checked = currently;
-      return;
-    }
-    // Update local cache then re-render.
-    if (student) {
-      student.homeworkCompletion = student.homeworkCompletion || {};
-      student.homeworkCompletion[moduleId] = { complete: wantComplete, note: note, markedAt: new Date().toISOString() };
-      saveUserData(student);
-    }
-    if (typeof render === 'function') render();
-  } catch (e) {
-    console.error('[homework-completion]', e);
-    alert('Failed to save. Please try again.');
-    if (evt && evt.target) evt.target.checked = currently;
-  }
-}
-window.adminToggleHomeworkComplete = adminToggleHomeworkComplete;
 
 function renderAdminPlagiarismPage() {
   let html = '<div class="page-header fade-in"><h1>Plagiarism Detection</h1><p>Checks scenario responses for high similarity between students</p></div>';
@@ -3681,34 +3592,6 @@ function renderProgressBody() {
       </div>`;
   });
   html += '</div>';
-
-  // Homework completion status — populated by staff from the admin gradebook.
-  // Students see their instructor's manual check per module + any short note.
-  const hw = (APP.currentUser && APP.currentUser.homeworkCompletion) || {};
-  const hwRows = COURSE_MODULES.map(mod => {
-    const entry = hw[mod.id];
-    if (entry && entry.complete) {
-      const noteLine = entry.note ? '<div style="font-size:12px;color:var(--charcoal-muted);margin-top:2px;"><em>' + escapeHtml(entry.note) + '</em></div>' : '';
-      return `<tr>
-        <td><strong>Module ${mod.id}</strong> — ${escapeHtml(mod.title)}</td>
-        <td style="text-align:center;"><span class="badge badge-complete"><i class="fa-solid fa-check"></i> Complete</span>${noteLine}</td>
-      </tr>`;
-    }
-    return `<tr>
-      <td><strong>Module ${mod.id}</strong> — ${escapeHtml(mod.title)}</td>
-      <td style="text-align:center;color:var(--charcoal-muted);"><i class="fa-regular fa-circle"></i> Not yet marked</td>
-    </tr>`;
-  }).join('');
-  html += `
-    <h2 class="mb-2 mt-4" style="font-size:1.3rem;">Homework Completion</h2>
-    <p class="text-muted text-sm" style="margin-top:-6px;">Your instructor marks each module's homework as complete once they've reviewed your work.</p>
-    <div class="card"><div class="card-body" style="padding:0;overflow-x:auto;">
-      <table class="admin-table">
-        <thead><tr><th>Module</th><th style="text-align:center;">Status</th></tr></thead>
-        <tbody>${hwRows}</tbody>
-      </table>
-    </div></div>`;
-
   // Section-quiz attempts history
   html += `
     <h2 class="mb-2 mt-4" style="font-size:1.3rem;">My Section-Quiz Attempts</h2>
@@ -5855,81 +5738,28 @@ async function syncStudentsFromBackend() {
   const byUsername = {};
   local.forEach(u => { byUsername[u.username] = u; });
 
-  // Small helper: convert server hours_by_category into the local hourLogs
-  // shape. The category totals become one synthetic row per category so the
-  // admin gradebook can sum them without needing per-entry detail.
-  // (Per-entry detail lives on /api/admin/students/:id for the drill-down view.)
-  const hoursFromCategoryTotals = (byCat) => {
-    const out = { observation: [], teaching: [], personal: [] };
-    Object.entries(byCat || {}).forEach(([cat, total]) => {
-      const key = out[cat] ? cat : 'personal';
-      out[key].push({ hours: Number(total) || 0, synthetic: true });
-    });
-    return out;
-  };
-
-  const applyServerProgress = (target, row) => {
-    target.fullName = row.full_name || target.fullName || row.username;
-    target.email = row.email || target.email;
-    target.createdAt = row.created_at || target.createdAt;
-    target.enrollmentCode = row.enrollment_code || target.enrollmentCode;
-    target.backendId = row.id;
-    target.id = row.id;
-    target.final_exam_unlocked = row.final_exam_unlocked === true;
-    target.final_exam_unlocked_at = row.final_exam_unlocked_at || null;
-
-    // Per-module quiz best percentages, from server (authoritative for admin).
-    if (row.quiz_scores_by_module && typeof row.quiz_scores_by_module === 'object') {
-      target.quizScores = target.quizScores || {};
-      Object.entries(row.quiz_scores_by_module).forEach(([modId, pct]) => {
-        // Server always wins on the admin side — we want to see what the
-        // student actually did, not what happens to be in the admin's browser.
-        target.quizScores[modId] = Number(pct);
-      });
-    }
-
-    // Final exam best attempt.
-    if (typeof row.best_exam_pct === 'number' || row.best_exam_pct != null) {
-      target.examScore = Number(row.best_exam_pct);
-    }
-    if (row.exam_passed === true) target.examPassed = true;
-
-    // Hours by category totals — rendered as synthetic entries so
-    // getTotalHours()/getHoursByType() still work in the admin views.
-    if (row.hours_by_category && typeof row.hours_by_category === 'object') {
-      target.hourLogs = hoursFromCategoryTotals(row.hours_by_category);
-    }
-
-    // Staff homework-completion checklist.
-    if (row.homework_completion && typeof row.homework_completion === 'object') {
-      target.homeworkCompletion = {};
-      Object.entries(row.homework_completion).forEach(([modId, v]) => {
-        target.homeworkCompletion[modId] = {
-          complete: !!(v && v.complete),
-          note: (v && v.note) || '',
-          markedAt: v && v.marked_at || null
-        };
-      });
-    }
-
-    // Scenario aggregate (used by the gradebook "Scenarios" column).
-    if (typeof row.scenario_avg === 'number' && row.scenario_avg != null) {
-      // Represent as a single synthetic scenarioSubmission so the existing
-      // scenarioSubmissions.filter(...).map(s=>s.grade) logic keeps working.
-      target.scenarioSubmissions = [{ grade: Math.round(row.scenario_avg), synthetic: true }];
-    } else if (target.scenarioSubmissions && target.scenarioSubmissions.every(s => s.synthetic)) {
-      // If server no longer has any and only had synthetic ones, clear them.
-      target.scenarioSubmissions = [];
-    }
-  };
-
   rows.forEach(row => {
     const existing = byUsername[row.username];
     if (existing) {
-      applyServerProgress(existing, row);
+      // Refresh server-owned fields, keep local progress fields intact
+      existing.fullName = row.full_name || existing.fullName || row.username;
+      existing.email = row.email || existing.email;
+      existing.createdAt = row.created_at || existing.createdAt;
+      existing.enrollmentCode = row.enrollment_code || existing.enrollmentCode;
+      existing.backendId = row.id;
+      existing.id = row.id;
+      // Proctor gate for final exam — server-authoritative.
+      existing.final_exam_unlocked = row.final_exam_unlocked === true;
+      existing.final_exam_unlocked_at = row.final_exam_unlocked_at || null;
     } else {
       const fresh = createDefaultUserData(row.username, row.full_name || row.username);
-      applyServerProgress(fresh, row);
+      fresh.email = row.email || '';
+      fresh.createdAt = row.created_at || new Date().toISOString();
+      fresh.enrollmentCode = row.enrollment_code || '';
+      fresh.backendId = row.id;
+      fresh.id = row.id;
+      fresh.final_exam_unlocked = row.final_exam_unlocked === true;
+      fresh.final_exam_unlocked_at = row.final_exam_unlocked_at || null;
       local.push(fresh);
       byUsername[row.username] = fresh;
     }
@@ -5993,122 +5823,6 @@ async function syncStudentsFromBackend() {
 // can see real progress. They're safe to call even if offline: the
 // local save still happens, and the POST quietly fails.
 // ------------------------------------------------------------
-
-// ------------------------------------------------------------
-// 0. STUDENT PROGRESS HYDRATION
-// Pull the student's OWN quiz scores, hours, scenarios, exam status, and
-// homework-completion state from the server and merge them into local
-// storage. This is what makes hours logged on a phone show up on a laptop
-// (and vice-versa), and what makes the module-quiz history persist across
-// browsers/devices.
-//
-// Rules:
-//   - MERGE, don't overwrite. Anything the server knows about wins for that
-//     specific key; anything local-only (e.g. section visited flags) is
-//     preserved.
-//   - For quizScores, take max(local, server) per module — same rule the
-//     writer already uses.
-//   - Runs after login and once per dashboard/gradebook/hours visit
-//     (debounced to at most once every 30s).
-// ------------------------------------------------------------
-let _numaLastHydrateAt = 0;
-async function hydrateMyProgressFromServer(force) {
-  try {
-    if (!APP.currentUser || APP.currentUser.isAdmin) return false;
-    if (typeof API_BASE === 'undefined' || API_BASE === null) return false;
-    const now = Date.now();
-    if (!force && (now - _numaLastHydrateAt < 30 * 1000)) return false;
-    _numaLastHydrateAt = now;
-
-    const data = await apiCall('/api/my/progress');
-    if (!data || data.error) return false;
-
-    const u = getUserData(APP.currentUser.username);
-    if (!u) return false;
-
-    // Quiz scores: server value wins ONLY when it's higher (matches the
-    // existing "best attempt" semantics).
-    u.quizScores = u.quizScores || {};
-    Object.entries(data.quizScores || {}).forEach(([modId, pct]) => {
-      const local = u.quizScores[modId];
-      if (local == null || Number(pct) > Number(local)) {
-        u.quizScores[modId] = Number(pct);
-      }
-    });
-
-    // Hours: server is the source of truth for logged entries. Merge by id
-    // so any brand-new local entries that haven't posted yet aren't lost.
-    const serverHours = data.hourLogs || {};
-    const localHours = u.hourLogs || { observation: [], teaching: [], personal: [] };
-    ['observation', 'teaching', 'personal'].forEach(cat => {
-      const remote = Array.isArray(serverHours[cat]) ? serverHours[cat] : [];
-      const localOnly = (localHours[cat] || []).filter(e => !e.id);
-      const merged = [...remote, ...localOnly];
-      // De-dupe by id when present.
-      const seen = new Set();
-      localHours[cat] = merged.filter(e => {
-        if (!e.id) return true;
-        if (seen.has(e.id)) return false;
-        seen.add(e.id); return true;
-      });
-    });
-    u.hourLogs = localHours;
-
-    // Scenarios: replace with server list (server is authoritative and
-    // includes grade/feedback the local copy wouldn't have).
-    if (Array.isArray(data.scenarioSubmissions)) {
-      u.scenarioSubmissions = data.scenarioSubmissions;
-    }
-
-    // Final exam pass/score — take the better of local vs server.
-    if (data.examPassed === true) u.examPassed = true;
-    if (typeof data.examScore === 'number') {
-      u.examScore = Math.max(u.examScore || 0, data.examScore);
-    }
-
-    // Homework completion — server-only field.
-    u.homeworkCompletion = data.homeworkCompletion || {};
-
-    saveUserData(u);
-    // Keep the in-memory currentUser in sync so anything reading it
-    // immediately sees the fresh data.
-    Object.assign(APP.currentUser, {
-      quizScores: u.quizScores,
-      hourLogs: u.hourLogs,
-      scenarioSubmissions: u.scenarioSubmissions,
-      examPassed: u.examPassed,
-      examScore: u.examScore,
-      homeworkCompletion: u.homeworkCompletion
-    });
-    return true;
-  } catch (e) {
-    console.warn('[hydrate]', e);
-    return false;
-  }
-}
-window.hydrateMyProgressFromServer = hydrateMyProgressFromServer;
-
-// Hook navigation so that visiting dashboard / gradebook / hours forces a
-// fresh pull. Debounced by the helper itself.
-(function wrapNavigateForHydration() {
-  if (typeof navigate !== 'function') return;
-  const _orig = navigate;
-  window.navigate = function(view, params) {
-    const ret = _orig.apply(this, arguments);
-    try {
-      if (APP.currentUser && !APP.currentUser.isAdmin) {
-        if (view === 'dashboard' || view === 'gradebook' || view === 'hours') {
-          // Fire-and-forget — re-renders happen from the caller.
-          hydrateMyProgressFromServer().then(changed => {
-            if (changed && typeof render === 'function') render();
-          });
-        }
-      }
-    } catch (_) {}
-    return ret;
-  };
-  navigate = window.navigate;
-})();
 
 // 1. Module quiz scores
 (function wrapSubmitQuizForBackend() {
@@ -9567,15 +9281,9 @@ async function loadAdminHomeworkInbox() {
         }
         APP.currentUser = Object.assign({}, userData, {
           id: u.id, role: u.role, full_name: u.full_name, email: u.email,
-          must_reset_password: u.must_reset_password === true,
-          final_exam_unlocked: u.final_exam_unlocked === true
+          must_reset_password: u.must_reset_password === true
         });
         try { saveSession({ username: u.username }); } catch(_) {}
-        // Pull server progress so a page reload on a fresh device still
-        // shows hours + quizzes logged elsewhere.
-        if (typeof window.hydrateMyProgressFromServer === 'function') {
-          try { await window.hydrateMyProgressFromServer(true); } catch(_) {}
-        }
         if (APP.currentView === 'login' || !APP.currentView) navigate('dashboard');
       }
     } catch (e) {
