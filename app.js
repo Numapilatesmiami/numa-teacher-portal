@@ -4540,11 +4540,11 @@ async function submitSectionQuiz() {
 function _ensureChatStyles() {
   if (document.getElementById('numa-chat-styles')) return;
   const css = `
-  .chat-shell{display:flex;flex-direction:column;height:calc(100vh - 200px);min-height:520px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .chat-shell{display:flex;flex-direction:column;height:min(calc(100dvh - 180px), calc(100vh - 180px));max-height:calc(100dvh - 140px);min-height:420px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
   .chat-header{padding:14px 18px;background:#fff;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;gap:12px;}
   .chat-header h2{margin:0;font-size:17px;color:#3b2f24;}
   .chat-header .chat-sub{font-size:12px;color:#8a7a6a;}
-  .chat-stream{flex:1 1 auto;overflow-y:auto;padding:18px 16px 12px;display:flex;flex-direction:column;gap:4px;}
+  .chat-stream{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:18px 16px 12px;display:flex;flex-direction:column;gap:4px;}
   .chat-empty{margin:auto;text-align:center;color:#8a7a6a;font-size:14px;}
   .chat-day-divider{align-self:center;margin:10px 0 4px;padding:3px 12px;border-radius:999px;background:#fff;border:1px solid #e6dfd1;color:#8a7a6a;font-size:11px;letter-spacing:.4px;text-transform:uppercase;}
   .chat-row{display:flex;gap:10px;align-items:flex-end;max-width:78%;}
@@ -4579,13 +4579,13 @@ function _ensureChatStyles() {
   .chat-disclaimer strong{color:#5a4a36;font-weight:600;}
 
   /* Two-pane topic forum */
-  .forum-2pane{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 200px);min-height:560px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
+  .forum-2pane{display:grid;grid-template-columns:340px 1fr;gap:0;height:min(calc(100dvh - 180px), calc(100vh - 180px));max-height:calc(100dvh - 140px);min-height:460px;background:#fafaf7;border:1px solid #e6dfd1;border-radius:14px;overflow:hidden;}
   .topic-pane{display:flex;flex-direction:column;background:#fff;border-right:1px solid #e6dfd1;min-width:0;}
   .topic-pane-head{padding:14px 16px;border-bottom:1px solid #e6dfd1;display:flex;align-items:center;gap:8px;}
   .topic-pane-head h3{margin:0;font-size:15px;color:#3b2f24;flex:1;}
   .topic-new-btn{background:#A38D78;color:#fff;border:0;padding:7px 13px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
   .topic-new-btn:hover{background:#8e7967;}
-  .topic-list{flex:1 1 auto;overflow-y:auto;}
+  .topic-list{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
   .topic-empty{padding:30px 20px;text-align:center;color:#8a7a6a;font-size:13.5px;}
   .topic-card{padding:12px 14px;border-bottom:1px solid #f0e9da;cursor:pointer;display:flex;flex-direction:column;gap:4px;position:relative;transition:background .12s;}
   .topic-card:hover{background:#fafaf2;}
@@ -4624,7 +4624,7 @@ function _ensureChatStyles() {
   .topic-modal-hint{font-size:11.5px;color:#8a7a6a;margin-top:4px;}
 
   @media(max-width:780px){
-    .forum-2pane{grid-template-columns:1fr;height:calc(100vh - 180px);}
+    .forum-2pane{grid-template-columns:1fr;height:min(calc(100dvh - 160px), calc(100vh - 160px));max-height:calc(100dvh - 120px);}
     .topic-pane{display:flex;}
     .forum-2pane.show-chat .topic-pane{display:none;}
     .forum-2pane:not(.show-chat) .chat-pane{display:none;}
