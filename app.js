@@ -7388,6 +7388,8 @@ async function loadAdminHomeworkInbox() {
   window.renderAdminContent = function() {
     const html = _orig.apply(this, arguments);
     setTimeout(() => {
+      // Teachers don't see this: students don't upload homework to the portal.
+      if (window.APP && APP.currentUser && (APP.currentUser.isTeacher || APP.currentUser.role === 'teacher')) return;
       const grid = document.querySelector('.admin-overview-grid');
       if (!grid || grid.dataset.hwInboxCard === '1') return;
       grid.dataset.hwInboxCard = '1';
