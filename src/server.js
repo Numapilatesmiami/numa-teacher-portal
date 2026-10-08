@@ -3,6 +3,16 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 
+// ===== TUITION PRIVACY =====
+// Teachers never see or change student tuition — admin only.
+const _TUITION_KEYS = ['tuition_status', 'tuition_total', 'tuition_amount_paid', 'tuition_notes'];
+function _stripTuition(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...row };
+  _TUITION_KEYS.forEach(k => { delete out[k]; });
+  return out;
+}
+
 // ===== PASSWORD HELPERS =====
 // Phones and copy/paste often add an invisible space before/after a password.
 // We store passwords trimmed, and at login we accept either the exact text or
@@ -1103,7 +1113,7 @@ app.get('/api/final-exam', authRequired, async (req, res) => {
 // scenario average, best final exam attempt, and total hours by category —
 // everything the admin gradebook needs to render without any per-student
 // follow-up calls.
-app.get('/api/admin/students', staffRequired, async (_req, res) => {
+app.get('/api/admin/students', staffRequired, async (req, res) => {
  try {
   const usersRes = await pool.query(`
     SELECT u.id, u.username, u.full_name, u.email, u.enrollment_code, u.created_at,
@@ -1205,7 +1215,7 @@ app.get('/api/admin/students', staffRequired, async (_req, res) => {
       homework_completion: hwByUser[u.id] || {}
     };
   });
-  res.json(enriched);
+  res.json(req.user.role === 'admin' ? enriched : enriched.map(_stripTuition));
  } catch (e) {
   console.error('[admin/students]', e);
   res.status(500).json({ error: 'admin students query failed', detail: String(e && e.message || e) });
@@ -1259,7 +1269,7 @@ app.get('/api/admin/students/:id', staffRequired, async (req, res) => {
   const scenRes = await pool.query('SELECT * FROM scenarios WHERE user_id = $1 ORDER BY submitted_at DESC', [req.params.id]);
   const hoursRes = await pool.query('SELECT * FROM practice_hours WHERE user_id = $1 ORDER BY logged_at DESC', [req.params.id]);
   const examRes = await pool.query('SELECT * FROM final_exam_attempts WHERE user_id = $1 ORDER BY completed_at DESC', [req.params.id]);
-  res.json({ user: userRes.rows[0], quiz_scores: quizRes.rows, scenarios: scenRes.rows, hours: hoursRes.rows, final_exam: examRes.rows });
+  res.json({ user: req.user.role === 'admin' ? userRes.rows[0] : _stripTuition(userRes.rows[0]), quiz_scores: quizRes.rows, scenarios: scenRes.rows, hours: hoursRes.rows, final_exam: examRes.rows });
 });
 
 app.delete('/api/admin/students/:id', adminRequired, async (req, res) => {
@@ -1783,6 +1793,97 @@ async function notifyAdmins(payload) {
     for (const row of ids.rows) await notify(row.id, payload);
   } catch (e) { console.warn('[notify-admins] failed:', e.message); }
 }
+
+// ----- Notification bell: unread inbox threads + bulletin posts -----
+// Items count as unread until the person opens them. Activity before
+// BELL_SINCE is treated as already seen so existing users don't get a
+// flood on day one; accounts created after BELL_LAUNCH see every post.
+const BELL_SINCE = '2026-10-01T00:00:00Z';
+const BELL_LAUNCH = '2026-10-08T00:00:00Z';
+
+app.get('/api/my/unread', authRequired, async (req, res) => {
+  try {
+    const me = req.user.id;
+    const isStaff = req.user.role === 'admin' || req.user.role === 'teacher';
+    const inbox = await pool.query(
+      isStaff
+        ? `WITH ev AS (
+             SELECT q.id AS question_id, q.created_at AS at, q.user_id AS author_id FROM student_questions q
+             UNION ALL
+             SELECT r.question_id, r.created_at, r.author_id FROM question_replies r WHERE r.author_role = 'student'
+           )
+           SELECT q.id, q.subject, u.full_name AS from_name, MAX(ev.at) AS last_at, COUNT(*)::int AS new_count
+             FROM ev
+             JOIN student_questions q ON q.id = ev.question_id
+             LEFT JOIN users u ON u.id = q.user_id
+             LEFT JOIN inbox_reads ir ON ir.user_id = $1 AND ir.question_id = q.id
+            WHERE ev.author_id <> $1
+              AND ev.at > GREATEST(COALESCE(ir.last_read_at, '-infinity'::timestamptz), $2::timestamptz)
+            GROUP BY q.id, q.subject, u.full_name
+            ORDER BY last_at DESC LIMIT 50`
+        : `SELECT q.id, q.subject, MAX(au.full_name) AS from_name, MAX(r.created_at) AS last_at, COUNT(*)::int AS new_count
+             FROM question_replies r
+             JOIN student_questions q ON q.id = r.question_id AND q.user_id = $1
+             LEFT JOIN users au ON au.id = r.author_id
+             LEFT JOIN inbox_reads ir ON ir.user_id = $1 AND ir.question_id = q.id
+            WHERE r.author_id <> $1
+              AND r.created_at > GREATEST(COALESCE(ir.last_read_at, '-infinity'::timestamptz), $2::timestamptz)
+            GROUP BY q.id, q.subject
+            ORDER BY last_at DESC LIMIT 50`,
+      [me, BELL_SINCE]
+    );
+    const bulletin = await pool.query(
+      `SELECT b.id, b.title, b.body, b.created_at, au.full_name AS author_name
+         FROM bulletin_posts b
+         JOIN users me ON me.id = $1
+         LEFT JOIN users au ON au.id = b.created_by
+         LEFT JOIN bulletin_reads br ON br.user_id = $1 AND br.post_id = b.id
+        WHERE br.post_id IS NULL
+          AND (b.created_by IS NULL OR b.created_by <> $1)
+          AND (me.created_at >= $3::timestamptz OR b.created_at >= $2::timestamptz)
+        ORDER BY b.created_at DESC LIMIT 50`,
+      [me, BELL_SINCE, BELL_LAUNCH]
+    );
+    res.json({
+      inbox: inbox.rows,
+      bulletin: bulletin.rows,
+      total: inbox.rows.length + bulletin.rows.length
+    });
+  } catch (e) {
+    console.error('[my unread]', e);
+    res.status(500).json({ error: 'Failed to load notifications' });
+  }
+});
+
+// Body: { kind: 'inbox', id } | { kind: 'bulletin', id } | { kind: 'bulletin', all: true }
+app.post('/api/my/unread/read', authRequired, async (req, res) => {
+  try {
+    const { kind, id, all } = req.body || {};
+    const me = req.user.id;
+    if (kind === 'inbox' && id) {
+      await pool.query(
+        `INSERT INTO inbox_reads (user_id, question_id, last_read_at)
+           SELECT $1, id, NOW() FROM student_questions WHERE id = $2
+         ON CONFLICT (user_id, question_id) DO UPDATE SET last_read_at = NOW()`,
+        [me, Number(id)]
+      );
+    } else if (kind === 'bulletin' && all) {
+      await pool.query(
+        `INSERT INTO bulletin_reads (user_id, post_id) SELECT $1, id FROM bulletin_posts
+         ON CONFLICT DO NOTHING`, [me]);
+    } else if (kind === 'bulletin' && id) {
+      await pool.query(
+        `INSERT INTO bulletin_reads (user_id, post_id) SELECT $1, id FROM bulletin_posts WHERE id = $2
+         ON CONFLICT DO NOTHING`, [me, Number(id)]);
+    } else {
+      return res.status(400).json({ error: 'Nothing to mark' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[my unread read]', e);
+    res.status(500).json({ error: 'Failed to mark read' });
+  }
+});
 
 // ----- Notification endpoints -----
 app.get('/api/notifications', authRequired, async (req, res) => {

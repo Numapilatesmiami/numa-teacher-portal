@@ -21,6 +21,10 @@ function getSession() { return JSON.parse(_sGet('numa_session') || 'null'); }
 function saveSession(sess) { _sSet('numa_session', sess === null ? null : JSON.stringify(sess)); }
 function getAuthToken() { return _sGet('numa_token'); }
 function setAuthToken(t) { _sSet('numa_token', t); }
+// True when the signed-in user is a teacher (admin shell, limited access).
+function numaIsTeacher() {
+  try { const u = window.APP && APP.currentUser; return !!(u && (u.isTeacher || u.role === 'teacher')); } catch (_) { return false; }
+}
 
 // Backend API client — silently no-ops if API_BASE is not configured
 async function apiCall(path, options = {}) {
@@ -1497,11 +1501,6 @@ function renderAdminContent() {
       <h3>Discussion Forum</h3>
       <p>Moderate posts · pin announcements</p>
     </div>
-    <div class="admin-overview-card" onclick="navigate('admin',{view:'plagiarism'})">
-      <div class="admin-overview-icon"><i class="fa-solid fa-flag"></i></div>
-      <h3>Plagiarism Check</h3>
-      <p>Compare student work for similarities</p>
-    </div>
     <div class="admin-overview-card" onclick="navigate('admin',{view:'program-settings'})">
       <div class="admin-overview-icon"><i class="fa-solid fa-sliders"></i></div>
       <h3>Program Settings</h3>
@@ -2152,60 +2151,6 @@ function gradeScenario(username, subIdx) {
   render();
 }
 
-// ----- Plagiarism Detection (simple similarity check) -----
-function checkSimilarity(text1, text2) {
-  if (!text1 || !text2) return 0;
-  const words1 = text1.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  const words2 = text2.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  if (words1.length === 0 || words2.length === 0) return 0;
-  const set1 = new Set(words1);
-  const set2 = new Set(words2);
-  const intersection = [...set1].filter(w => set2.has(w)).length;
-  const union = new Set([...set1, ...set2]).size;
-  return Math.round((intersection / union) * 100);
-}
-
-function renderPlagiarismReport() {
-  const users = getUsers().filter(u => u.username !== 'admin');
-  const flags = [];
-  
-  for (let i = 0; i < users.length; i++) {
-    for (let j = i + 1; j < users.length; j++) {
-      const subs1 = users[i].scenarioSubmissions || [];
-      const subs2 = users[j].scenarioSubmissions || [];
-      
-      subs1.forEach(s1 => {
-        subs2.forEach(s2 => {
-          if (s1.scenarioId === s2.scenarioId) {
-            const allText1 = s1.responses.join(' ');
-            const allText2 = s2.responses.join(' ');
-            const similarity = checkSimilarity(allText1, allText2);
-            if (similarity > 60) {
-              const sc = SCENARIO_POOL.find(s => s.id === s1.scenarioId);
-              flags.push({
-                student1: users[i].fullName || users[i].username,
-                student2: users[j].fullName || users[j].username,
-                scenario: sc ? sc.title : s1.scenarioId,
-                similarity
-              });
-            }
-          }
-        });
-      });
-    }
-  }
-  
-  if (flags.length === 0) return '<p class="text-muted">No similarity flags detected.</p>';
-  
-  let html = '<div class="card"><div class="card-body" style="padding:0;overflow-x:auto;"><table class="admin-table"><thead><tr><th>Student 1</th><th>Student 2</th><th>Scenario</th><th>Similarity</th></tr></thead><tbody>';
-  flags.forEach(f => {
-    const color = f.similarity > 80 ? 'var(--error)' : 'var(--warning)';
-    html += '<tr><td>' + f.student1 + '</td><td>' + f.student2 + '</td><td>' + f.scenario + '</td><td style="color:' + color + ';font-weight:700;">' + f.similarity + '%</td></tr>';
-  });
-  html += '</tbody></table></div></div>';
-  return html;
-}
-
 // ===== PATCH: Add scenarios and grading to navigation and routing =====
 
 // Override the original renderMainContent to include new views
@@ -2224,7 +2169,6 @@ const _origRenderAdminContent = renderAdminContent;
 window.renderAdminContent = function() {
   const p = APP.viewParams || {};
   if (p.view === 'gradebook') return renderAdminGradebook();
-  if (p.view === 'plagiarism') return renderAdminPlagiarismPage();
   if (p.view === 'codes') return renderEnrollmentCodesPage();
   if (p.view === 'modules') return renderModuleManager();
   if (p.view === 'editModule') return renderModuleEditor(p.moduleId);
@@ -2267,7 +2211,6 @@ function renderAdminGradebook() {
 
   html += '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">' +
     '<button class="btn btn-secondary" onclick="navigate(\'admin\')"><i class="fa-solid fa-arrow-left"></i> All Students</button>' +
-    '<button class="btn btn-secondary" onclick="navigate(\'admin\',{view:\'plagiarism\'})"><i class="fa-solid fa-flag"></i> Plagiarism Check</button>' +
     '<button class="btn btn-secondary" onclick="toggleGradebookHomeworkView()"><i class="fa-solid fa-list-check"></i> <span id="hw-toggle-label">Show Homework Checklist</span></button>' +
     '</div>';
 
@@ -2390,13 +2333,6 @@ async function adminToggleHomeworkComplete(evt, studentId, studentName, moduleId
   }
 }
 window.adminToggleHomeworkComplete = adminToggleHomeworkComplete;
-
-function renderAdminPlagiarismPage() {
-  let html = '<div class="page-header fade-in"><h1>Plagiarism Detection</h1><p>Checks scenario responses for high similarity between students</p></div>';
-  html += '<div style="margin-bottom:20px;"><button class="btn btn-secondary" onclick="navigate(\'admin\',{view:\'gradebook\'})"><i class="fa-solid fa-arrow-left"></i> Back to Gradebook</button></div>';
-  html += renderPlagiarismReport();
-  return html;
-}
 
 // Override admin shell to include gradebook nav
 const _origRenderAdminShell = renderAdminShell;
@@ -3562,7 +3498,10 @@ async function markSectionComplete(sectionId, completed = true) {
     if (p.view === 'section-quiz') return renderAdminSectionQuizEditor();
     if (p.view === 'editModuleQuiz') return renderAdminModuleQuizEditor(p.moduleId);
     if (p.view === 'moduleHomework') return renderAdminModuleHomework(p.moduleId);
-    if (p.view === 'homework-inbox') return renderAdminHomeworkInbox();
+    if (p.view === 'homework-inbox') {
+      if (numaIsTeacher()) return '<div class="card"><div class="card-body text-center text-muted">Homework Inbox is not used for teachers.</div></div>';
+      return renderAdminHomeworkInbox();
+    }
     if (p.view === 'program-settings') return renderProgramSettingsEditor();
     return _origAdmin();
   };
@@ -6440,6 +6379,16 @@ window.saveStudentEnrollment = saveStudentEnrollment;
 // Render the enrollment card (track + tuition) inside the student detail page
 function renderEnrollmentCard(student) {
   if (!student) return '';
+  if (numaIsTeacher()) {
+    const t = student.program_track || '';
+    return `
+    <div class="card mb-3" style="border-left:4px solid #A38D78;">
+      <div class="card-body">
+        <h3 style="margin-top:0;"><i class="fa-solid fa-clipboard-user"></i> Enrollment</h3>
+        <div><strong>Program Track:</strong> ${escapeHtml(t ? resolveTrackLabel(t) : 'Not assigned')}</div>
+      </div>
+    </div>`;
+  }
   const track = student.program_track || '';
   const status = student.tuition_status || 'unpaid';
   const total = student.tuition_total != null ? student.tuition_total : '';
@@ -6571,9 +6520,13 @@ async function decorateStudentsTable() {
   const emailHeaderIdx = headerCells.findIndex(th => th.textContent.trim() === 'Email');
   if (emailHeaderIdx >= 0) {
     const trackTh = document.createElement('th'); trackTh.textContent = 'Track';
-    const tuitionTh = document.createElement('th'); tuitionTh.textContent = 'Tuition';
-    head.insertBefore(tuitionTh, headerCells[emailHeaderIdx + 1] || null);
-    head.insertBefore(trackTh, tuitionTh);
+    if (numaIsTeacher()) {
+      head.insertBefore(trackTh, headerCells[emailHeaderIdx + 1] || null);
+    } else {
+      const tuitionTh = document.createElement('th'); tuitionTh.textContent = 'Tuition';
+      head.insertBefore(tuitionTh, headerCells[emailHeaderIdx + 1] || null);
+      head.insertBefore(trackTh, tuitionTh);
+    }
   }
 
   // Decorate each row
@@ -6594,8 +6547,12 @@ async function decorateStudentsTable() {
     // Insert after email column (the 2nd td)
     const tds = tr.querySelectorAll('td');
     if (tds.length >= 2) {
-      tds[1].parentNode.insertBefore(tuitionCell, tds[2] || null);
-      tds[1].parentNode.insertBefore(trackCell, tuitionCell);
+      if (numaIsTeacher()) {
+        tds[1].parentNode.insertBefore(trackCell, tds[2] || null);
+      } else {
+        tds[1].parentNode.insertBefore(tuitionCell, tds[2] || null);
+        tds[1].parentNode.insertBefore(trackCell, tuitionCell);
+      }
     }
   });
 }
@@ -6612,7 +6569,10 @@ async function decorateStudentsTable() {
   const _orig = renderAdminContent;
   window.renderAdminContent = function() {
     const p = APP.viewParams || {};
-    if (p.view === 'pathways') return renderAdminPathways();
+    if (p.view === 'pathways') {
+      if (numaIsTeacher()) return '<div class="card"><div class="card-body text-center text-muted">Certification Pathways are managed by the NUMA administrator.</div></div>';
+      return renderAdminPathways();
+    }
     return _orig.apply(this, arguments);
   };
   renderAdminContent = window.renderAdminContent;
@@ -6845,6 +6805,7 @@ window.savePathway = savePathway;
   window.renderAdminContent = function() {
     const html = _orig.apply(this, arguments);
     setTimeout(() => {
+      if (numaIsTeacher()) return; // admin only
       const grid = document.querySelector('.admin-overview-grid');
       if (!grid || grid.dataset.pathwaysCard === '1') return;
       grid.dataset.pathwaysCard = '1';
@@ -7360,6 +7321,7 @@ function filterHomeworkInbox(status) {
 window.filterHomeworkInbox = filterHomeworkInbox;
 
 async function loadAdminHomeworkInbox() {
+  if (numaIsTeacher()) return;
   const url = '/api/admin/homework-submissions' + (_hwInboxFilter ? ('?status=' + encodeURIComponent(_hwInboxFilter)) : '');
   const data = await apiCall(url);
   const subs = Array.isArray(data) ? data : [];
@@ -7389,7 +7351,7 @@ async function loadAdminHomeworkInbox() {
     const html = _orig.apply(this, arguments);
     setTimeout(() => {
       // Teachers don't see this: students don't upload homework to the portal.
-      if (window.APP && APP.currentUser && (APP.currentUser.isTeacher || APP.currentUser.role === 'teacher')) return;
+      if (numaIsTeacher()) return;
       const grid = document.querySelector('.admin-overview-grid');
       if (!grid || grid.dataset.hwInboxCard === '1') return;
       grid.dataset.hwInboxCard = '1';
@@ -10410,4 +10372,211 @@ async function loadAdminHomeworkInbox() {
     };
     renderAdminContent = window.renderAdminContent;
   }
+})();
+
+// ===== NUMA_BELL_V2: notification bell for admins, teachers and students =====
+// Shows unread inbox threads + unread bulletin posts. Each item stays until
+// the person opens it (inbox thread page, or the post from the bell).
+(function () {
+  if (window.__NUMA_BELL_V2__) return;
+  window.__NUMA_BELL_V2__ = true;
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const STATE = { data: { inbox: [], bulletin: [], total: 0 }, at: 0, loading: false };
+
+  function _signedIn() {
+    try { return !!(window.APP && APP.currentUser && typeof getAuthToken === 'function' && getAuthToken()) && !APP.previewAsStudent; } catch (_) { return false; }
+  }
+  function _isStaff() { const u = APP.currentUser || {}; return !!(u.isAdmin || u.isTeacher || u.role === 'admin' || u.role === 'teacher'); }
+  function _ago(d) {
+    const m = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+    if (m < 1) return 'just now'; if (m < 60) return m + 'm ago';
+    const h = Math.round(m / 60); if (h < 24) return h + 'h ago';
+    const dd = Math.round(h / 24); if (dd < 7) return dd + 'd ago';
+    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function _styles() {
+    if (document.getElementById('numa-bell2-css')) return;
+    const st = document.createElement('style');
+    st.id = 'numa-bell2-css';
+    st.textContent = `
+      #numa-bell2{position:relative;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;border:1px solid #e6dfd1;background:#fff;color:#5C4A36;cursor:pointer;margin-right:8px;flex-shrink:0;font-size:16px}
+      #numa-bell2:hover{background:#faf7f1}
+      #numa-bell2 .b2-dot{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:#A38D78;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-sizing:border-box}
+      #numa-bell2.has-unread{color:#A38D78;border-color:#d6c8b3}
+      #numa-bell2-panel{position:fixed;top:64px;right:16px;width:min(380px,calc(100vw - 24px));max-height:70vh;overflow:auto;background:#fff;border:1px solid #e6dfd1;border-radius:14px;box-shadow:0 12px 36px rgba(40,30,20,.16);z-index:100001;display:none}
+      #numa-bell2-panel.open{display:block}
+      .b2-head{padding:12px 14px;border-bottom:1px solid #f0e8d8;display:flex;align-items:center;justify-content:space-between;background:#faf7f1;position:sticky;top:0}
+      .b2-head h3{margin:0;font-size:15px;color:#3b2f24}
+      .b2-sec{padding:8px 14px 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8a7a6a;font-weight:600}
+      .b2-item{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid #f5efe2;cursor:pointer;background:#fffaf2}
+      .b2-item:hover{background:#fbf3e6}
+      .b2-ic{width:34px;height:34px;border-radius:50%;background:#A38D78;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px}
+      .b2-t{font-weight:600;font-size:13.5px;color:#3b2f24}
+      .b2-d{font-size:12.5px;color:#6a5b4a;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .b2-w{font-size:11px;color:#a09080;margin-top:2px}
+      .b2-empty{padding:34px 16px;text-align:center;color:#8a7a6a;font-size:13px}
+      .b2-link{background:none;border:0;color:#A38D78;font-size:12px;cursor:pointer;font-weight:600}
+      #numa-bell2-modal{position:fixed;inset:0;background:rgba(40,30,20,.45);z-index:100002;display:flex;align-items:center;justify-content:center;padding:16px}
+      #numa-bell2-modal .b2-card{background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function _mount() {
+    if (!_signedIn()) { const b = document.getElementById('numa-bell2'); if (b) b.remove(); return; }
+    _styles();
+    const right = document.querySelector('.top-nav .nav-right');
+    if (!right) return;
+    let bell = document.getElementById('numa-bell2');
+    if (bell && bell.parentNode === right) { _paintBell(); return; }
+    if (bell) bell.remove();
+    bell = document.createElement('button');
+    bell.id = 'numa-bell2';
+    bell.type = 'button';
+    bell.title = 'Notifications';
+    bell.setAttribute('aria-label', 'Notifications');
+    bell.innerHTML = '<i class="fa-regular fa-bell"></i>';
+    bell.onclick = (e) => { e.stopPropagation(); _toggle(); };
+    right.insertBefore(bell, right.firstChild);
+    _paintBell();
+  }
+
+  function _paintBell() {
+    const bell = document.getElementById('numa-bell2');
+    if (!bell) return;
+    const n = STATE.data.total || 0;
+    let dot = bell.querySelector('.b2-dot');
+    bell.classList.toggle('has-unread', n > 0);
+    bell.querySelector('i').className = n > 0 ? 'fa-solid fa-bell' : 'fa-regular fa-bell';
+    bell.title = n > 0 ? (n + ' unread') : 'No new notifications';
+    if (n > 0) {
+      if (!dot) { dot = document.createElement('span'); dot.className = 'b2-dot'; bell.appendChild(dot); }
+      dot.textContent = n > 9 ? '9+' : String(n);
+    } else if (dot) dot.remove();
+  }
+
+  async function _refresh(force) {
+    if (!_signedIn() || STATE.loading) return;
+    if (!force && Date.now() - STATE.at < 10000) { _paintBell(); return; }
+    STATE.loading = true;
+    try {
+      const r = await apiCall('/api/my/unread');
+      if (r && !r.error && Array.isArray(r.inbox)) { STATE.data = r; STATE.at = Date.now(); }
+    } catch (_) {} finally { STATE.loading = false; }
+    _paintBell();
+    const p = document.getElementById('numa-bell2-panel');
+    if (p && p.classList.contains('open')) _renderPanel();
+  }
+  window.numaRefreshBell = () => _refresh(true);
+
+  function _renderPanel() {
+    let p = document.getElementById('numa-bell2-panel');
+    if (!p) { p = document.createElement('div'); p.id = 'numa-bell2-panel'; document.body.appendChild(p); p.addEventListener('click', e => e.stopPropagation()); }
+    const { inbox = [], bulletin = [] } = STATE.data;
+    let html = `<div class="b2-head"><h3>Notifications${STATE.data.total ? ` <span style="color:#A38D78">(${STATE.data.total})</span>` : ''}</h3>${bulletin.length ? '<button class="b2-link" onclick="numaBellMarkBulletinRead()">Mark bulletin read</button>' : ''}</div>`;
+    if (!inbox.length && !bulletin.length) {
+      html += '<div class="b2-empty"><i class="fa-regular fa-bell" style="font-size:26px;color:#c7b9a3;display:block;margin-bottom:8px"></i>You\'re all caught up.</div>';
+    }
+    if (inbox.length) {
+      html += '<div class="b2-sec">Inbox</div>' + inbox.map(q => `
+        <div class="b2-item" onclick="numaBellOpenInbox(${Number(q.id)})">
+          <div class="b2-ic"><i class="fa-regular fa-envelope"></i></div>
+          <div style="min-width:0"><div class="b2-t">${esc(q.subject || '(No subject)')}</div>
+          <div class="b2-d">${_isStaff() ? 'From ' + esc(q.from_name || 'a student') : 'New reply from ' + esc(q.from_name || 'NUMA staff')}${q.new_count > 1 ? ' · ' + q.new_count + ' new' : ''}</div>
+          <div class="b2-w">${_ago(q.last_at)}</div></div>
+        </div>`).join('');
+    }
+    if (bulletin.length) {
+      html += '<div class="b2-sec">Bulletin Board</div>' + bulletin.map(b => `
+        <div class="b2-item" onclick="numaBellOpenBulletin(${Number(b.id)})">
+          <div class="b2-ic"><i class="fa-solid fa-bullhorn"></i></div>
+          <div style="min-width:0"><div class="b2-t">${esc(b.title)}</div>
+          <div class="b2-d">${esc(b.body)}</div>
+          <div class="b2-w">${b.author_name ? esc(b.author_name) + ' · ' : ''}${_ago(b.created_at)}</div></div>
+        </div>`).join('');
+    }
+    p.innerHTML = html;
+  }
+  function _toggle() {
+    let p = document.getElementById('numa-bell2-panel');
+    if (p && p.classList.contains('open')) { p.classList.remove('open'); return; }
+    _renderPanel();
+    p = document.getElementById('numa-bell2-panel');
+    p.classList.add('open');
+    _refresh(true);
+  }
+  document.addEventListener('click', () => { const p = document.getElementById('numa-bell2-panel'); if (p) p.classList.remove('open'); });
+
+  async function _markInbox(id) {
+    STATE.data.inbox = (STATE.data.inbox || []).filter(q => Number(q.id) !== Number(id));
+    STATE.data.total = STATE.data.inbox.length + (STATE.data.bulletin || []).length;
+    _paintBell();
+    await apiCall('/api/my/unread/read', { method: 'POST', body: JSON.stringify({ kind: 'inbox', id: Number(id) }) });
+  }
+  window.numaBellOpenInbox = function (id) {
+    const p = document.getElementById('numa-bell2-panel'); if (p) p.classList.remove('open');
+    if (_isStaff()) navigate('admin', { view: 'question-detail', id: Number(id) });
+    else navigate('question-detail', { id: Number(id) });
+  };
+  window.numaBellOpenBulletin = async function (id) {
+    const b = (STATE.data.bulletin || []).find(x => Number(x.id) === Number(id));
+    const p = document.getElementById('numa-bell2-panel'); if (p) p.classList.remove('open');
+    if (b) {
+      const m = document.createElement('div');
+      m.id = 'numa-bell2-modal';
+      m.innerHTML = `<div class="b2-card">
+        <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8a7a6a;font-weight:600;margin-bottom:6px"><i class="fa-solid fa-bullhorn" style="color:#A38D78"></i> Bulletin Board</div>
+        <h2 style="margin:0 0 10px;font-size:20px;color:#3b2f24">${esc(b.title)}</h2>
+        <div style="font-size:14.5px;line-height:1.6;color:#4a4038;white-space:pre-wrap">${esc(b.body)}</div>
+        <div style="font-size:12px;color:#8a7d6a;margin-top:12px">${b.author_name ? esc(b.author_name) + ' · ' : ''}${new Date(b.created_at).toLocaleString()}</div>
+        <div style="text-align:right;margin-top:18px"><button class="btn btn-primary" id="numa-bell2-close">Close</button></div></div>`;
+      document.body.appendChild(m);
+      const close = () => m.remove();
+      m.addEventListener('click', e => { if (e.target === m) close(); });
+      m.querySelector('#numa-bell2-close').onclick = close;
+    }
+    STATE.data.bulletin = (STATE.data.bulletin || []).filter(x => Number(x.id) !== Number(id));
+    STATE.data.total = (STATE.data.inbox || []).length + STATE.data.bulletin.length;
+    _paintBell();
+    await apiCall('/api/my/unread/read', { method: 'POST', body: JSON.stringify({ kind: 'bulletin', id: Number(id) }) });
+  };
+  window.numaBellMarkBulletinRead = async function () {
+    STATE.data.bulletin = [];
+    STATE.data.total = (STATE.data.inbox || []).length;
+    _paintBell(); _renderPanel();
+    await apiCall('/api/my/unread/read', { method: 'POST', body: JSON.stringify({ kind: 'bulletin', all: true }) });
+  };
+
+  // Opening an inbox thread (from anywhere) clears it.
+  if (typeof navigate === 'function') {
+    const _origNav = navigate;
+    window.navigate = function (view, params) {
+      const out = _origNav.apply(this, arguments);
+      try {
+        const p = params || {};
+        const qid = (view === 'question-detail' && p.id) ? p.id
+          : (view === 'admin' && p.view === 'question-detail' && p.id) ? p.id : null;
+        if (qid && _signedIn()) _markInbox(qid);
+        // Staff opening the Bulletin Board page have seen every post.
+        if (view === 'admin' && p.view === 'bulletin' && _signedIn()) window.numaBellMarkBulletinRead();
+      } catch (_) {}
+      return out;
+    };
+    navigate = window.navigate;
+  }
+
+  // Keep the bell mounted after every render, and poll for new items.
+  if (typeof render === 'function') {
+    const _origRender = render;
+    window.render = function () {
+      const out = _origRender.apply(this, arguments);
+      setTimeout(() => { _mount(); _refresh(false); }, 0);
+      return out;
+    };
+    render = window.render;
+  }
+  setInterval(() => { if (_signedIn()) { _mount(); _refresh(true); } }, 45000);
+  setInterval(_mount, 2000);
+  setTimeout(() => { _mount(); _refresh(true); }, 800);
 })();

@@ -434,6 +434,20 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_bulletin_pinned ON bulletin_posts(pinned DESC, created_at DESC);
 
+      -- ===== NOTIFICATION BELL: per-user read state =====
+      CREATE TABLE IF NOT EXISTS inbox_reads (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        question_id INTEGER NOT NULL REFERENCES student_questions(id) ON DELETE CASCADE,
+        last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, question_id)
+      );
+      CREATE TABLE IF NOT EXISTS bulletin_reads (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        post_id INTEGER NOT NULL REFERENCES bulletin_posts(id) ON DELETE CASCADE,
+        read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, post_id)
+      );
+
       -- In-person schedule: lectures + supervised sessions students must attend.
       CREATE TABLE IF NOT EXISTS class_schedule (
         id SERIAL PRIMARY KEY,
