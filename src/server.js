@@ -1543,6 +1543,73 @@ app.get('/api/progress/me', authRequired, async (req, res) => {
   }
 });
 
+// Record that a student opened/read one or more sections.
+// Body: { section_ids: ["1-1", ...], backfill?: true }
+// backfill = sections already read on this device before tracking existed;
+// those do not bump view_count/last_viewed_at beyond first insert.
+app.post('/api/progress/views', authRequired, async (req, res) => {
+  try {
+    if (req.user.role !== 'student') return res.json({ ok: true, skipped: 'not a student' });
+    const raw = Array.isArray(req.body?.section_ids) ? req.body.section_ids : [];
+    const ids = [...new Set(raw.map(x => String(x || '').trim()).filter(x => x && x.length <= 64))].slice(0, 300);
+    if (!ids.length) return res.json({ ok: true, recorded: 0 });
+    const backfill = req.body?.backfill === true;
+    const sql = backfill
+      ? `INSERT INTO section_views (user_id, section_id)
+           SELECT $1, UNNEST($2::text[])
+         ON CONFLICT (user_id, section_id) DO NOTHING`
+      : `INSERT INTO section_views (user_id, section_id)
+           SELECT $1, UNNEST($2::text[])
+         ON CONFLICT (user_id, section_id)
+         DO UPDATE SET last_viewed_at = NOW(), view_count = section_views.view_count + 1`;
+    const r = await pool.query(sql, [req.user.id, ids]);
+    res.json({ ok: true, recorded: r.rowCount });
+  } catch (err) {
+    console.error('[progress views]', err);
+    res.status(500).json({ error: 'Failed to save progress' });
+  }
+});
+
+// Admin/teacher: one call with every student's course progress.
+app.get('/api/admin/progress-overview', staffRequired, async (_req, res) => {
+  try {
+    const [mods, secs, users, views, done, quiz, secQuiz, hours] = await Promise.all([
+      pool.query(`SELECT id, title, subtitle, sort_order FROM modules WHERE is_published = TRUE ORDER BY sort_order, id`),
+      pool.query(`SELECT s.id, s.module_id, s.title, s.sort_order FROM sections s
+                    JOIN modules m ON m.id = s.module_id AND m.is_published = TRUE
+                   ORDER BY s.module_id, s.sort_order, s.id`),
+      pool.query(`SELECT id, username, full_name, email, program_track, created_at
+                    FROM users WHERE role = 'student' ORDER BY LOWER(full_name), id`),
+      pool.query(`SELECT user_id, section_id, first_viewed_at, last_viewed_at, view_count FROM section_views`),
+      pool.query(`SELECT user_id, section_id, completed_at FROM section_progress WHERE completed = TRUE`),
+      pool.query(`SELECT user_id, module_id,
+                         MAX(ROUND((score::numeric / NULLIF(total,0)) * 100)) AS best_pct,
+                         COUNT(*)::int AS attempts, MAX(completed_at) AS last_at
+                    FROM quiz_scores WHERE total > 0 GROUP BY user_id, module_id`),
+      pool.query(`SELECT user_id, section_id,
+                         MAX(ROUND((score::numeric / NULLIF(total,0)) * 100)) AS best_pct,
+                         COUNT(*)::int AS attempts, MAX(completed_at) AS last_at
+                    FROM section_quiz_attempts WHERE total > 0 GROUP BY user_id, section_id`),
+      pool.query(`SELECT user_id, MAX(logged_at) AS last_at FROM practice_hours GROUP BY user_id`).catch(() => ({ rows: [] }))
+    ]);
+    const S = {};
+    users.rows.forEach(u => { S[u.id] = { ...u, viewed: {}, completed: {}, module_quiz: {}, section_quiz: {}, last_active: null }; });
+    const bump = (st, t) => { if (st && t && (!st.last_active || new Date(t) > new Date(st.last_active))) st.last_active = t; };
+    views.rows.forEach(r => { const st = S[r.user_id]; if (!st) return; st.viewed[r.section_id] = { first: r.first_viewed_at, last: r.last_viewed_at, count: r.view_count }; bump(st, r.last_viewed_at); });
+    done.rows.forEach(r => { const st = S[r.user_id]; if (!st) return; st.completed[r.section_id] = r.completed_at; bump(st, r.completed_at); });
+    quiz.rows.forEach(r => { const st = S[r.user_id]; if (!st) return; st.module_quiz[r.module_id] = { best: Number(r.best_pct), attempts: r.attempts, last: r.last_at }; bump(st, r.last_at); });
+    secQuiz.rows.forEach(r => { const st = S[r.user_id]; if (!st) return; st.section_quiz[r.section_id] = { best: Number(r.best_pct), attempts: r.attempts, last: r.last_at }; bump(st, r.last_at); });
+    hours.rows.forEach(r => bump(S[r.user_id], r.last_at));
+    res.json({
+      modules: mods.rows.map(m => ({ ...m, sections: secs.rows.filter(s => String(s.module_id) === String(m.id)) })),
+      students: users.rows.map(u => S[u.id])
+    });
+  } catch (err) {
+    console.error('[progress overview]', err);
+    res.status(500).json({ error: 'Failed to load progress overview' });
+  }
+});
+
 // Admin: view any student's progress + quiz attempts
 app.get('/api/admin/students/:id/progress', staffRequired, async (req, res) => {
   try {

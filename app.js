@@ -10191,3 +10191,220 @@ async function loadAdminHomeworkInbox() {
   `;
   document.head.appendChild(styleEl);
 })();
+
+// ===== NUMA_PROGRESS_TRACKING_V2 =====
+// 1) Students: every section they open is recorded on the server (not just
+//    on their device), and sections read before this existed are backfilled.
+// 2) Admin/teacher: "Student Progress" page + a progress card on every
+//    student profile, all read from the server.
+(function () {
+  if (window.__NUMA_PROG_V2__) return;
+  window.__NUMA_PROG_V2__ = true;
+
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const BROWN = '#A38D78', DARK = '#5C4A36', LINE = '#ece4d5', MUTED = '#8a7a6a';
+
+  // ---------------- Student side: record section views ----------------
+  function _isLiveStudent() {
+    const u = window.APP && APP.currentUser;
+    if (!u || u.isAdmin || u.isTeacher || APP.previewAsStudent) return false;
+    try { return !!(typeof getAuthToken === 'function' && getAuthToken()); } catch (_) { return false; }
+  }
+  const _sentThisSession = new Set();
+  function _recordViews(ids, backfill) {
+    if (!_isLiveStudent()) return;
+    const fresh = (ids || []).map(String).filter(id => id && (backfill || !_sentThisSession.has(id)));
+    if (!fresh.length) return;
+    if (!backfill) fresh.forEach(id => _sentThisSession.add(id));
+    apiCall('/api/progress/views', { method: 'POST', body: JSON.stringify({ section_ids: fresh, backfill: !!backfill }) })
+      .then(r => { if (r && r.error && !backfill) fresh.forEach(id => _sentThisSession.delete(id)); })
+      .catch(() => { if (!backfill) fresh.forEach(id => _sentThisSession.delete(id)); });
+  }
+  if (typeof renderModulePage === 'function') {
+    const _origRMP = renderModulePage;
+    window.renderModulePage = function (moduleId, sectionId) {
+      const html = _origRMP.apply(this, arguments);
+      try {
+        const mod = (typeof COURSE_MODULES !== 'undefined') ? COURSE_MODULES.find(m => m.id === moduleId) : null;
+        const sec = mod && (sectionId ? mod.sections.find(s => s.id === sectionId) : mod.sections[0]);
+        if (sec && !sec.isQuiz && (typeof isModuleUnlocked !== 'function' || isModuleUnlocked(moduleId))) _recordViews([sec.id], false);
+      } catch (_) {}
+      return html;
+    };
+    renderModulePage = window.renderModulePage;
+  }
+  // One-time backfill of sections already read on this device.
+  let _backfilledFor = null;
+  setInterval(() => {
+    if (!_isLiveStudent()) return;
+    const u = APP.currentUser;
+    const key = u.id || u.username;
+    if (_backfilledFor === key) return;
+    _backfilledFor = key;
+    const ids = Object.keys(u.sectionProgress || {}).filter(k => u.sectionProgress[k]);
+    if (ids.length) _recordViews(ids, true);
+  }, 4000);
+
+  // ---------------- Admin side ----------------
+  let _cache = null, _cacheAt = 0;
+  async function _loadOverview(force) {
+    if (!force && _cache && Date.now() - _cacheAt < 20000) return _cache;
+    const r = await apiCall('/api/admin/progress-overview');
+    if (r && !r.error && Array.isArray(r.students)) { _cache = r; _cacheAt = Date.now(); return r; }
+    return { error: (r && r.error) || 'Could not load progress' };
+  }
+  function _fmt(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch (_) { return '—'; } }
+  function _ago(d) {
+    if (!d) return 'No activity yet';
+    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    if (days <= 0) return 'Today'; if (days === 1) return 'Yesterday'; if (days < 30) return days + ' days ago';
+    return _fmt(d);
+  }
+  function _stats(st, modules) {
+    let total = 0, read = 0, marked = 0, passed = 0;
+    const per = {};
+    modules.forEach(m => {
+      const ids = m.sections.map(s => String(s.id));
+      const r = ids.filter(id => st.viewed[id] || st.completed[id]).length;
+      const c = ids.filter(id => st.completed[id]).length;
+      const q = st.module_quiz[String(m.id)];
+      total += ids.length; read += r; marked += c;
+      if (q && q.best >= 80) passed++;
+      per[m.id] = { total: ids.length, read: r, marked: c, pct: ids.length ? Math.round(r / ids.length * 100) : 0, quiz: q || null };
+    });
+    return { total, read, marked, passed, pct: total ? Math.round(read / total * 100) : 0, per };
+  }
+  function _bar(pct) {
+    return `<div style="height:8px;background:#f1ebe0;border-radius:999px;overflow:hidden;min-width:80px"><div style="height:100%;width:${pct}%;background:${BROWN};border-radius:999px"></div></div>`;
+  }
+  function _quizChip(q) {
+    if (!q) return `<span style="color:#b9ad9c;font-size:12px">No quiz</span>`;
+    const ok = q.best >= 80;
+    return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;background:${ok ? '#efe6d8' : '#fbf1e6'};color:${ok ? DARK : '#9a5b2a'}">${q.best}%${ok ? ' ✓' : ''}</span>`;
+  }
+
+  // ---- All-students overview ----
+  window.renderAdminProgressOverview = function () {
+    setTimeout(async () => {
+      const slot = document.getElementById('numa-prog-overview');
+      if (!slot) return;
+      const data = await _loadOverview(true);
+      if (data.error) { slot.innerHTML = `<div class="card"><div class="card-body" style="color:#a33">${esc(data.error)}</div></div>`; return; }
+      const mods = data.modules;
+      if (!data.students.length) { slot.innerHTML = '<div class="card"><div class="card-body text-center text-muted">No students yet.</div></div>'; return; }
+      const rows = data.students.map(st => {
+        const s = _stats(st, mods);
+        return `<tr style="cursor:pointer" onclick="navigate('admin',{view:'student-progress',studentId:${Number(st.id)}})">
+          <td style="padding:10px 12px"><div style="font-weight:600;color:#3b2f24">${esc(st.full_name || st.username)}</div><div style="font-size:12px;color:${MUTED}">@${esc(st.username)}</div></td>
+          <td style="padding:10px 12px;min-width:150px"><div style="display:flex;align-items:center;gap:8px">${_bar(s.pct)}<strong style="font-size:13px">${s.pct}%</strong></div><div style="font-size:11.5px;color:${MUTED};margin-top:3px">${s.read} of ${s.total} sections read</div></td>
+          ${mods.map(m => { const p = s.per[m.id]; return `<td style="padding:10px 8px;text-align:center;font-size:12.5px"><div style="font-weight:600;color:${p.pct ? DARK : '#c3b8a8'}">${p.pct}%</div><div style="margin-top:3px">${p.quiz ? _quizChip(p.quiz) : '<span style="color:#d0c6b8">—</span>'}</div></td>`; }).join('')}
+          <td style="padding:10px 12px;text-align:center"><strong>${s.passed}</strong><span style="color:${MUTED}"> / ${mods.length}</span></td>
+          <td style="padding:10px 12px;white-space:nowrap;font-size:12.5px;color:${st.last_active ? '#3b2f24' : MUTED}">${_ago(st.last_active)}</td>
+        </tr>`;
+      }).join('');
+      slot.innerHTML = `
+        <div class="card"><div class="card-body" style="padding:0;overflow-x:auto">
+          <table class="admin-table" style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left">Student</th><th style="text-align:left">Course progress</th>
+              ${mods.map(m => `<th style="text-align:center" title="${esc(m.title)}">M${esc(m.id)}</th>`).join('')}
+              <th style="text-align:center">Quizzes passed</th><th>Last active</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div></div>
+        <p style="font-size:12px;color:${MUTED};margin-top:10px">Module columns show % of sections read, with the best module quiz score under it (80% or higher passes). Click a student to see every section.</p>`;
+    }, 0);
+    return `
+      <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin');return false;">Dashboard</a> <i class="fa-solid fa-chevron-right" style="font-size:10px"></i> <span>Student Progress</span></div>
+      <div class="page-header fade-in"><h1>Student Progress</h1><p>What each student has read, marked complete and passed — live from the server, on any device.</p></div>
+      <div id="numa-prog-overview"><div class="card"><div class="card-body text-center text-muted">Loading progress…</div></div></div>`;
+  };
+
+  // ---- Per-student progress (card + full page) ----
+  function _studentHtml(st, mods) {
+    const s = _stats(st, mods);
+    const stat = (label, value, sub) => `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value">${value}</div>${sub ? `<div style="font-size:12px;color:${MUTED};margin-top:2px">${sub}</div>` : ''}</div>`;
+    const modRows = mods.map(m => {
+      const p = s.per[m.id];
+      const secRows = m.sections.map(sec => {
+        const id = String(sec.id), v = st.viewed[id], c = st.completed[id], q = st.section_quiz[id];
+        const status = c ? `<span style="color:${DARK};font-weight:600">✓ Marked complete ${_fmt(c)}</span>`
+          : v ? `<span style="color:${DARK}">Read ${_fmt(v.last)}${v.count > 1 ? ` · ${v.count} visits` : ''}</span>`
+          : `<span style="color:#b9ad9c">Not opened</span>`;
+        return `<tr><td style="padding:7px 12px 7px 28px;font-size:13px">${esc(sec.title || id)}</td><td style="padding:7px 12px;font-size:12.5px">${status}</td><td style="padding:7px 12px;text-align:right">${q ? _quizChip(q) + `<span style="font-size:11px;color:${MUTED}"> · ${q.attempts} try${q.attempts > 1 ? 'ies' : ''}</span>` : ''}</td></tr>`;
+      }).join('');
+      return `
+        <tbody>
+          <tr style="background:#faf7f1;cursor:pointer" onclick="var b=this.parentNode.querySelectorAll('.numa-sec-row');for(var i=0;i<b.length;i++){b[i].style.display=b[i].style.display==='none'?'':'none'}">
+            <td style="padding:10px 12px;font-weight:600;color:#3b2f24">M${esc(m.id)} · ${esc(m.title)}</td>
+            <td style="padding:10px 12px"><div style="display:flex;align-items:center;gap:8px">${_bar(p.pct)}<span style="font-size:12.5px;white-space:nowrap">${p.read}/${p.total} read · ${p.marked} marked</span></div></td>
+            <td style="padding:10px 12px;text-align:right">${_quizChip(p.quiz)}</td>
+          </tr>
+          ${secRows.replace(/<tr>/g, '<tr class="numa-sec-row" style="display:none">')}
+        </tbody>`;
+    }).join('');
+    return `
+      <div class="stats-grid slide-up" style="margin-bottom:16px">
+        ${stat('Course Progress', s.pct + '%', `${s.read} of ${s.total} sections read`)}
+        ${stat('Marked Complete', s.marked, 'sections')}
+        ${stat('Module Quizzes Passed', `${s.passed} <span style="font-size:1rem;color:${MUTED}">/ ${mods.length}</span>`, '80% or higher')}
+        ${stat('Last Active', `<span style="font-size:1.1rem">${_ago(st.last_active)}</span>`, '')}
+      </div>
+      <div class="card mb-3"><div class="card-body" style="padding:0;overflow-x:auto">
+        <table class="admin-table" style="width:100%;border-collapse:collapse">
+          <thead><tr><th style="text-align:left">Module <span style="font-weight:400;color:${MUTED};font-size:12px">(click to see sections)</span></th><th style="text-align:left">Sections</th><th style="text-align:right">Module quiz</th></tr></thead>
+          ${modRows}
+        </table>
+      </div></div>`;
+  }
+  async function _fillStudent(slotId, match) {
+    const slot = document.getElementById(slotId);
+    if (!slot) return;
+    const data = await _loadOverview(false);
+    if (data.error) { slot.innerHTML = `<div class="card mb-3"><div class="card-body" style="color:#a33">${esc(data.error)}</div></div>`; return null; }
+    const st = data.students.find(match);
+    if (!st) { slot.innerHTML = `<div class="card mb-3"><div class="card-body text-muted">No progress record found for this student.</div></div>`; return null; }
+    slot.innerHTML = `<h3 class="mb-2">Course Progress</h3>` + _studentHtml(st, data.modules);
+    return st;
+  }
+  window.renderAdminStudentProgressPage = function (studentId) {
+    setTimeout(async () => {
+      const st = await _fillStudent('numa-prog-student', s => Number(s.id) === Number(studentId));
+      const h = document.getElementById('numa-prog-student-head');
+      if (h && st) h.innerHTML = `<h1>${esc(st.full_name || st.username)}</h1><p>@${esc(st.username)} · ${esc(st.email || '')}</p>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="navigate('admin',{student:'${esc(st.username).replace(/'/g, "\\'")}'})"><i class="fa-solid fa-user"></i> Full profile (hours, grading, enrollment)</button>`;
+    }, 0);
+    return `
+      <div class="breadcrumb fade-in"><a href="#" onclick="navigate('admin',{view:'progress'});return false;">Student Progress</a> <i class="fa-solid fa-chevron-right" style="font-size:10px"></i> <span>Student</span></div>
+      <div class="page-header fade-in" id="numa-prog-student-head"><h1>Student</h1></div>
+      <div id="numa-prog-student"><div class="card"><div class="card-body text-center text-muted">Loading progress…</div></div></div>`;
+  };
+
+  // Router: new views + legacy "student" view (studentId) that had no page.
+  if (typeof renderAdminContent === 'function') {
+    const _origAdmin = renderAdminContent;
+    window.renderAdminContent = function () {
+      const p = APP.viewParams || {};
+      if (p.view === 'progress') return window.renderAdminProgressOverview();
+      if ((p.view === 'student-progress' || p.view === 'student') && p.studentId) return window.renderAdminStudentProgressPage(p.studentId);
+      let html = _origAdmin.apply(this, arguments);
+      if (p.student && !p.view) {
+        // Existing profile page: drop the stale "not found" message (it only
+        // looked at this browser's storage) and add live progress at the top.
+        html = String(html).replace('<p>Student not found.</p>', '');
+        const uname = String(p.student);
+        setTimeout(() => _fillStudent('numa-prog-card', s => String(s.username).toLowerCase() === uname.toLowerCase()), 0);
+        const card = '<div id="numa-prog-card"><div class="card mb-3"><div class="card-body text-center text-muted">Loading course progress…</div></div></div>';
+        html = html.includes('<div class="stats-grid slide-up">') ? html.replace('<div class="stats-grid slide-up">', card + '<div class="stats-grid slide-up">') : card + html;
+      }
+      if (!p.student && !p.view) {
+        const tile = `<div class="admin-overview-card" onclick="navigate('admin',{view:'progress'})"><div class="admin-overview-icon"><i class="fa-solid fa-chart-line"></i></div><h3>Student Progress</h3><p>Sections read, completed and quizzes passed</p></div>`;
+        const marker = `<div class="admin-overview-card" onclick="navigate('admin',{view:'gradebook'})">`;
+        if (html.includes(marker)) html = html.replace(marker, tile + marker);
+      }
+      return html;
+    };
+    renderAdminContent = window.renderAdminContent;
+  }
+})();

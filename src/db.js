@@ -133,6 +133,19 @@ export async function initDatabase() {
       );
       CREATE INDEX IF NOT EXISTS idx_section_progress_user ON section_progress(user_id);
 
+      -- Sections a student has opened/read (separate from "Mark Section Complete").
+      -- No FK on section_id so a section that only exists in built-in content
+      -- can still be recorded.
+      CREATE TABLE IF NOT EXISTS section_views (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        section_id TEXT NOT NULL,
+        first_viewed_at TIMESTAMPTZ DEFAULT NOW(),
+        last_viewed_at TIMESTAMPTZ DEFAULT NOW(),
+        view_count INTEGER DEFAULT 1,
+        PRIMARY KEY (user_id, section_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_section_views_user ON section_views(user_id);
+
       -- ===== OPTIONAL PER-SECTION QUIZZES =====
       CREATE TABLE IF NOT EXISTS section_quizzes (
         id SERIAL PRIMARY KEY,
