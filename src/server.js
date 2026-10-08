@@ -2,6 +2,19 @@
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
+
+// ===== PASSWORD HELPERS =====
+// Phones and copy/paste often add an invisible space before/after a password.
+// We store passwords trimmed, and at login we accept either the exact text or
+// the trimmed text, so a stray space can never lock someone out.
+function _cleanPw(pw) { return String(pw == null ? '' : pw).trim(); }
+async function _pwMatches(pw, hash) {
+  if (!hash) return false;
+  const raw = String(pw == null ? '' : pw);
+  if (await bcrypt.compare(raw, hash)) return true;
+  const t = raw.trim();
+  return t !== raw && t.length > 0 ? bcrypt.compare(t, hash) : false;
+}
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import multer from 'multer';
@@ -173,7 +186,7 @@ app.post('/api/auth/register', async (req, res) => {
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
     if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(_cleanPw(password), 10);
     // Assign the pathway attached to the enrollment code so the student lands in the right track automatically.
     const result = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, email, enrollment_code, program_track, role)
@@ -191,13 +204,14 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = String((req.body || {}).username || '').trim();
+    const password = String((req.body || {}).password || '');
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
     // Emergency admin login: env-var ADMIN_PASSWORD always works as a rescue
     // password, even if the DB hash was changed. Never triggers a
     // must_reset_password prompt. Case-insensitive username match.
-    if (String(username).toLowerCase() === String(ADMIN_USERNAME).toLowerCase() && password === ADMIN_PASSWORD) {
+    if (String(username).toLowerCase() === String(ADMIN_USERNAME).toLowerCase() && (password === ADMIN_PASSWORD || password.trim() === ADMIN_PASSWORD)) {
       let adminRes = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [ADMIN_USERNAME]);
       if (adminRes.rowCount === 0) {
         const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
@@ -217,15 +231,29 @@ app.post('/api/auth/login', async (req, res) => {
       return res.json({ token, user: { id: admin.id, username: admin.username, full_name: admin.full_name, email: admin.email, role: 'admin', must_reset_password: false } });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
-    if (result.rowCount === 0) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const user = result.rows[0];
+    // Match by username OR email (case-insensitive, spaces ignored). Teachers
+    // and students often type their email instead of their username.
+    const result = await pool.query(
+      `SELECT * FROM users
+        WHERE LOWER(TRIM(username)) = LOWER($1) OR LOWER(TRIM(email)) = LOWER($1)
+        ORDER BY (LOWER(TRIM(username)) = LOWER($1)) DESC, id ASC`,
+      [username]
+    );
+    if (result.rowCount === 0) {
+      console.warn('[login] no account for', JSON.stringify(username));
+      return res.status(401).json({ error: 'We could not find that username or email.' });
+    }
+    let user = null;
+    for (const row of result.rows) {
+      if (await _pwMatches(password, row.password_hash)) { user = row; break; }
+    }
+    if (!user) {
+      console.warn('[login] wrong password for', JSON.stringify(username), 'user ids', result.rows.map(r => r.id).join(','));
+      return res.status(401).json({ error: 'Incorrect password. Please try again or ask NUMA to reset it.' });
+    }
     if (user.is_active === false) {
       return res.status(403).json({ error: 'Account disabled. Please contact NUMA Pilates.' });
     }
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
     res.json({
@@ -256,8 +284,9 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
 // User-facing: change my own password. Also used to satisfy must_reset_password.
 app.post('/api/auth/change-password', authRequired, async (req, res) => {
   try {
-    const { current_password, new_password } = req.body || {};
-    if (!new_password || String(new_password).length < 6) {
+    const { current_password } = req.body || {};
+    const new_password = _cleanPw((req.body || {}).new_password);
+    if (!new_password || new_password.length < 6) {
       return res.status(400).json({ error: 'New password must be at least 6 characters' });
     }
     const r = await pool.query('SELECT password_hash, must_reset_password FROM users WHERE id = $1', [req.user.id]);
@@ -267,7 +296,7 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
     // the temp password (they just used it to log in).
     if (r.rows[0].must_reset_password !== true) {
       if (!current_password) return res.status(400).json({ error: 'Current password required' });
-      const ok = await bcrypt.compare(current_password, r.rows[0].password_hash);
+      const ok = await _pwMatches(current_password, r.rows[0].password_hash);
       if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
     }
     const hash = await bcrypt.hash(new_password, 10);
@@ -366,7 +395,7 @@ app.post('/api/admin/staff', adminRequired, async (req, res) => {
     const uname = String(username).trim().toLowerCase();
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [uname]);
     if (existing.rowCount > 0) return res.status(400).json({ error: 'Username already taken' });
-    const tempPassword = (password && String(password).length >= 6) ? String(password) : _generateTempPassword();
+    const tempPassword = (password && _cleanPw(password).length >= 6) ? _cleanPw(password) : _generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 10);
     const result = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, email, role, is_active, must_reset_password)
@@ -434,7 +463,7 @@ app.post('/api/admin/users/:id/reset-password', adminRequired, async (req, res) 
     const { password } = req.body || {};
     const target = await pool.query('SELECT id, username, full_name, role FROM users WHERE id = $1', [req.params.id]);
     if (target.rowCount === 0) return res.status(404).json({ error: 'User not found' });
-    const tempPassword = (password && String(password).length >= 6) ? String(password) : _generateTempPassword();
+    const tempPassword = (password && _cleanPw(password).length >= 6) ? _cleanPw(password) : _generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 10);
     await pool.query(
       'UPDATE users SET password_hash = $1, must_reset_password = TRUE WHERE id = $2',
@@ -765,13 +794,18 @@ app.delete('/api/admin/sections/:id', adminRequired, async (req, res) => {
 
 // ===== QUIZ SCORES =====
 app.post('/api/quiz-scores', authRequired, async (req, res) => {
-  const { module_id, score, total, time_spent_seconds, attempt_data } = req.body;
-  const result = await pool.query(
-    `INSERT INTO quiz_scores (user_id, module_id, score, total, time_spent_seconds, attempt_data)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [req.user.id, module_id, score, total, time_spent_seconds || null, attempt_data || null]
-  );
-  res.json(result.rows[0]);
+  try {
+    const { module_id, score, total, time_spent_seconds, attempt_data } = req.body || {};
+    const result = await pool.query(
+      `INSERT INTO quiz_scores (user_id, module_id, score, total, time_spent_seconds, attempt_data)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.user.id, module_id, score, total, time_spent_seconds || null, attempt_data || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[quiz-scores save]', err);
+    res.status(500).json({ error: 'Could not save quiz score' });
+  }
 });
 
 app.get('/api/quiz-scores', authRequired, async (req, res) => {
@@ -1337,15 +1371,16 @@ app.put('/api/auth/me', authRequired, async (req, res) => {
 
 app.put('/api/auth/password', authRequired, async (req, res) => {
   try {
-    const { current_password, new_password } = req.body;
+    const current_password = (req.body || {}).current_password;
+    const new_password = _cleanPw((req.body || {}).new_password);
     if (!current_password || !new_password) return res.status(400).json({ error: 'Both current and new password required' });
     if (new_password.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
     const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
     if (userRes.rowCount === 0) return res.status(404).json({ error: 'User not found' });
-    const valid = await bcrypt.compare(current_password, userRes.rows[0].password_hash);
+    const valid = await _pwMatches(current_password, userRes.rows[0].password_hash);
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
     const hash = await bcrypt.hash(new_password, 10);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, req.user.id]);
+    await pool.query('UPDATE users SET password_hash = $1, must_reset_password = FALSE, updated_at = NOW() WHERE id = $2', [hash, req.user.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -1391,11 +1426,11 @@ app.put('/api/admin/students/:id/final-exam-unlock', staffRequired, async (req, 
 // ===== ADMIN: RESET STUDENT PASSWORD =====
 app.put('/api/admin/students/:id/password', adminRequired, async (req, res) => {
   try {
-    const { new_password } = req.body;
+    const new_password = _cleanPw((req.body || {}).new_password);
     if (!new_password || new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const hash = await bcrypt.hash(new_password, 10);
     const result = await pool.query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING id, username, full_name',
+      'UPDATE users SET password_hash = $1, must_reset_password = FALSE, updated_at = NOW() WHERE id = $2 RETURNING id, username, full_name',
       [hash, req.params.id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Student not found' });

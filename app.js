@@ -257,8 +257,8 @@ function renderLogin() {
         <div id="login-error" class="login-error"></div>
         <div id="login-form">
           <div class="form-group">
-            <label>Username</label>
-            <input type="text" class="form-control" id="login-user" placeholder="Enter your username" autocomplete="username">
+            <label>Username or email</label>
+            <input type="text" class="form-control" id="login-user" placeholder="Username or email" autocomplete="username">
           </div>
           <div class="form-group">
             <label>Password</label>
@@ -324,6 +324,11 @@ async function handleLogin() {
       method: 'POST',
       body: JSON.stringify({ username: user, password: pass })
     });
+    if (result && result.error && !result.token && result._httpStatus && result._httpStatus < 500) {
+      errEl.innerHTML = '<strong>Login failed.</strong> ' + String(result.error).replace(/[<>&]/g, '');
+      errEl.style.display = 'block';
+      return;
+    }
     if (result?.token) {
       setAuthToken(result.token);
       if (result.user.role === 'admin') {
@@ -3343,7 +3348,7 @@ async function adminResetStudentPassword(studentId, studentName) {
   if (API_BASE === null || API_BASE === undefined) { alert('This needs the backend connected.'); return; }
   const result = await apiCall(`/api/admin/students/${studentId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPw }) });
   if (result && result.ok) {
-    alert(`Password reset successfully for ${studentName}.\nNew password: ${newPw}\n\nPlease share this with them securely. They can change it themselves once logged in via Account Settings.`);
+    alert(`Password reset successfully for ${studentName}.\nUsername: ${(result.user && result.user.username) || ''}  (their email also works)\nNew password: ${newPw.trim()}\n\nPlease share this with them securely. They can change it themselves once logged in via Account Settings.`);
   } else {
     alert('Reset failed. Please try again.');
   }
@@ -5467,7 +5472,7 @@ async function applyModuleQuizOverrides() {
 (function hookOverrideLoader() {
   // Run once on script load if the user is already authed (page refresh)
   setTimeout(() => {
-    if (APP && APP.currentUser && API_BASE) {
+    if (APP && APP.currentUser && API_BASE != null) {
       applyModuleQuizOverrides().then(() => {
         // Trigger a re-render only if we're on the quiz/module view
         if (APP.currentView === 'module' || APP.currentView === 'dashboard') {
@@ -5527,7 +5532,7 @@ async function loadProgramSettings() {
 // Kick off load on script start, and again after successful login
 (function hookProgramSettingsLoader() {
   setTimeout(() => {
-    if (APP && APP.currentUser && API_BASE) {
+    if (APP && APP.currentUser && API_BASE != null) {
       loadProgramSettings();
     }
   }, 600);
@@ -5753,7 +5758,7 @@ async function applyModuleContentOverrides() {
 // Kick off on script load if already authed, and after login
 (function hookModuleContentLoader() {
   setTimeout(() => {
-    if (APP && APP.currentUser && API_BASE) {
+    if (APP && APP.currentUser && API_BASE != null) {
       applyModuleContentOverrides();
     }
   }, 700);
@@ -6118,7 +6123,7 @@ window.hydrateMyProgressFromServer = hydrateMyProgressFromServer;
     const ret = _orig.apply(this, args);
     try {
       const state = window._quizState;
-      if (state && state.submitted && APP.currentUser && !APP.currentUser.isAdmin && API_BASE) {
+      if (state && state.submitted && APP.currentUser && !APP.currentUser.isAdmin && API_BASE != null) {
         const totalQ = state.questions ? state.questions.length : 0;
         const correctCount = typeof state.correct === 'number' ? state.correct
           : Math.round((state.score / 100) * totalQ);
@@ -6171,7 +6176,7 @@ window.hydrateMyProgressFromServer = hydrateMyProgressFromServer;
     const ret = _orig.apply(this, [type, ...rest]);
 
     try {
-      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE && date && hours > 0) {
+      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE != null && date && hours > 0) {
         apiCall('/api/hours', {
           method: 'POST',
           body: JSON.stringify({
@@ -6207,7 +6212,7 @@ window.hydrateMyProgressFromServer = hydrateMyProgressFromServer;
     const ret = _orig.apply(this, [scenarioId, ...rest]);
 
     try {
-      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE) {
+      if (APP.currentUser && !APP.currentUser.isAdmin && API_BASE != null) {
         const responseText = captured.join('\n\n---\n\n');
         const wordCount = responseText.split(/\s+/).filter(Boolean).length;
         apiCall('/api/scenarios', {
@@ -8266,7 +8271,8 @@ async function loadAdminHomeworkInbox() {
         method: 'POST', body: JSON.stringify({})
       });
       if (r && r.temp_password) {
-        alert('Temporary password for ' + name + ':\n\n' + r.temp_password + '\n\nShare this with them securely. They will be forced to change it on next login.');
+        const un = (r.user && r.user.username) ? r.user.username : '';
+        alert('Login details for ' + name + ':\n\n' + (un ? 'Username: ' + un + '  (their email also works)\n' : '') + 'Temporary password: ' + r.temp_password + '\n\nShare both with them. They will choose their own password right after signing in.');
       } else {
         alert('Reset failed: ' + (r?.error || 'unknown error'));
       }
@@ -8338,18 +8344,27 @@ async function loadAdminHomeworkInbox() {
       '</div>';
     document.body.appendChild(overlay);
     document.getElementById('numa-force-save').addEventListener('click', async () => {
-      const a = document.getElementById('numa-force-new').value;
-      const b = document.getElementById('numa-force-confirm').value;
+      const a = document.getElementById('numa-force-new').value.trim();
+      const b = document.getElementById('numa-force-confirm').value.trim();
       const err = document.getElementById('numa-force-err');
       if (!a || a.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
       if (a !== b) { err.textContent = 'Passwords do not match.'; return; }
       err.textContent = '';
       try {
-        await apiCall('/api/auth/change-password', {
-          method: 'POST', body: JSON.stringify({ new_password: a })
+        const saveBtn = document.getElementById('numa-force-save');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+        const r = await apiCall('/api/auth/change-password', {
+          method: 'POST', body: JSON.stringify({ new_password: a.trim() })
         });
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = 'Save &amp; continue'; }
+        if (!r || r.error) {
+          err.textContent = (r && r.error) ? r.error : 'Could not reach the server. Your password was NOT changed — please try again.';
+          return;
+        }
         if (APP.currentUser) APP.currentUser.must_reset_password = false;
         overlay.remove();
+        const uname = (APP.currentUser && APP.currentUser.username) || '';
+        alert('Your new password is saved.' + (uname ? '\n\nNext time, sign in with:\nUsername: ' + uname + '\nPassword: the one you just chose' : ''));
       } catch (e) {
         err.textContent = e?.message || 'Save failed';
       }
