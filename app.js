@@ -10256,7 +10256,8 @@ async function loadAdminHomeworkInbox() {
   function _fmt(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch (_) { return '—'; } }
   function _ago(d) {
     if (!d) return 'No activity yet';
-    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    const t = new Date(d), n = new Date();
+    const days = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
     if (days <= 0) return 'Today'; if (days === 1) return 'Yesterday'; if (days < 30) return days + ' days ago';
     return _fmt(d);
   }
@@ -10332,7 +10333,7 @@ async function loadAdminHomeworkInbox() {
         const status = c ? `<span style="color:${DARK};font-weight:600">✓ Marked complete ${_fmt(c)}</span>`
           : v ? `<span style="color:${DARK}">Read ${_fmt(v.last)}${v.count > 1 ? ` · ${v.count} visits` : ''}</span>`
           : `<span style="color:#b9ad9c">Not opened</span>`;
-        return `<tr><td style="padding:7px 12px 7px 28px;font-size:13px">${esc(sec.title || id)}</td><td style="padding:7px 12px;font-size:12.5px">${status}</td><td style="padding:7px 12px;text-align:right">${q ? _quizChip(q) + `<span style="font-size:11px;color:${MUTED}"> · ${q.attempts} try${q.attempts > 1 ? 'ies' : ''}</span>` : ''}</td></tr>`;
+        return `<tr><td style="padding:7px 12px 7px 28px;font-size:13px">${esc(sec.title || id)}</td><td style="padding:7px 12px;font-size:12.5px">${status}</td><td style="padding:7px 12px;text-align:right">${q ? _quizChip(q) + `<span style="font-size:11px;color:${MUTED}"> · ${q.attempts} ${q.attempts > 1 ? 'tries' : 'try'}</span>` : ''}</td></tr>`;
       }).join('');
       return `
         <tbody>
